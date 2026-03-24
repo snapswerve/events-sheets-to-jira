@@ -1,107 +1,233 @@
 /**
- * parser.js — Transforms raw Google Sheets rows into structured event objects.
+ * parser.js — Parses multi-row event groups from each tab type.
  *
- * Expected column headers (case-insensitive, order flexible):
- *   Event Name | Trigger / User Action | Platform | Properties | Owner | Priority | Status | Notes
+ * Each tab has a different structure but shares a pattern:
+ * a "header" row (with priority + event name in specific columns) followed by
+ * "property" rows (with values only in the property columns).
  *
- * Property rows: The "Properties" column can contain newline-separated values like:
- *   "cta_text (string, required)\npath (string, required)\nvariant (string, optional)"
- *
- * The parser is lenient — it skips rows with no event name and logs a warning.
+ * This parser handles all four tab types: Track, Identify, Page, Screen.
  */
 
-const COLUMN_ALIASES = {
-  eventName: ['event name', 'event', 'name'],
-  trigger: ['trigger', 'user action', 'trigger / user action', 'description'],
-  platform: ['platform', 'platforms'],
-  properties: ['properties', 'props', 'event properties'],
-  owner: ['owner', 'assigned to', 'assignee', 'engineer'],
-  priority: ['priority', 'p0/p1/p2'],
-  status: ['status'],
-  notes: ['notes', 'note', 'comments'],
-};
+// ─── Track Tab ───
+// Columns: Order(0) | Generating Source(1) | Product Section(2) | Event Name(3) | When Fired(4) |
+//          ID state(5) | Templates(6) | Proposed POC Properties(7) | Reviewed by MC(8) |
+//          Team Ownership(9) | Properties(10) | Go to Definition(11) | Property Status(12) |
+//          Ticket(13) | Code Example(14) | Comments(15) | In stage(16) | Validated?(17) | In prod(18)
 
-/**
- * Finds which column index matches a given field, by checking aliases.
- */
-function findColumnIndex(headers, aliases) {
-  for (const alias of aliases) {
-    const index = headers.findIndex((h) => h.toLowerCase().trim() === alias);
-    if (index !== -1) return index;
-  }
-  return -1;
-}
-
-/**
- * Parses a raw properties cell string into an array of property objects.
- * Handles newline-separated or comma-separated entries.
- *
- * Input: "cta_text (string, required)\npath (string, optional)"
- * Output: [{ name: 'cta_text', type: 'string', required: true }, ...]
- */
-function parseProperties(rawValue) {
-  if (!rawValue) return [];
-
-  // Split on newlines or semicolons
-  const lines = rawValue.split(/[\n;]+/).map((l) => l.trim()).filter(Boolean);
-
-  return lines.map((line) => {
-    // Try to extract: property_name (type, required/optional) — description
-    const match = line.match(/^([a-z_]+)\s*\(([^)]*)\)?\s*(.*)$/i);
-
-    if (match) {
-      const [, name, meta, description] = match;
-      const metaParts = meta.split(',').map((m) => m.trim().toLowerCase());
-      const type = metaParts[0] || 'string';
-      const required = metaParts.includes('required');
-      return { name: name.trim(), type, required, description: description.trim() };
-    }
-
-    // Fallback: treat the whole line as just the property name
-    return { name: line, type: 'string', required: false, description: '' };
-  });
-}
-
-/**
- * Main export — takes raw sheet rows (2D array) and returns an array of event objects.
- */
-export function parseSheetsData(rows, tabName) {
-  const [headerRow, ...dataRows] = rows;
-
-  if (!headerRow) return [];
-
-  // Build column index map
-  const columnMap = {};
-  for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
-    columnMap[field] = findColumnIndex(headerRow, aliases);
-  }
+export function parseTrackTab(rows) {
+  if (rows.length < 2) return [];
 
   const events = [];
+  let current = null;
 
-  for (const [rowIndex, row] of dataRows.entries()) {
-    const get = (field) => {
-      const idx = columnMap[field];
-      return idx !== -1 ? (row[idx] || '').trim() : '';
-    };
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const priority = row[0];
 
-    const eventName = get('eventName');
-
-    // Skip empty rows silently
-    if (!eventName) continue;
-
-    events.push({
-      eventName,
-      trigger: get('trigger'),
-      platform: get('platform'),
-      properties: parseProperties(get('properties')),
-      owner: get('owner'),
-      priority: get('priority'),
-      status: get('status'),
-      notes: get('notes'),
-      sourceTab: tabName,
-      sourceRow: rowIndex + 2, // 1-indexed, accounting for header
-    });
+    if (priority) {
+      // New event group
+      if (current) events.push(current);
+      current = {
+        tabType: 'track',
+        priority: normalizePriority(priority),
+        generatingSource: (row[1] || '').trim(),
+        productSection: (row[2] || '').trim(),
+        eventName: (row[3] || '').trim(),
+        whenFired: (row[4] || '').trim(),
+        idState: (row[5] || '').trim(),
+        templates: (row[6] || '').trim(),
+        teamOwnership: (row[9] || '').trim(),
+        properties: [],
+        sourceRow: i + 1,
+      };
+      // First row might also have a property in col 10
+      if (row[10]) {
+        current.properties.push({
+          name: (row[10] || '').trim(),
+          status: normalizeStatus(row[12]),
+        });
+      }
+    } else if (current && row[10]) {
+      // Property continuation row
+      current.properties.push({
+        name: (row[10] || '').trim(),
+        status: normalizeStatus(row[12]),
+      });
+    }
   }
+  if (current) events.push(current);
 
   return events;
+}
+
+// ─── Identify Tab ───
+// Columns: Priority(0) | Generating Source(1) | When fires(2) | Identify source(3) |
+//          ID state(4) | Traits(5) | Ticket PROD(6) | In prod(7) | Trait Status(8)
+
+export function parseIdentifyTab(rows) {
+  if (rows.length < 2) return [];
+
+  const events = [];
+  let current = null;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const priority = row[0];
+
+    if (priority) {
+      if (current) events.push(current);
+      current = {
+        tabType: 'identify',
+        priority: normalizePriority(priority),
+        generatingSource: (row[1] || '').trim(),
+        whenFired: (row[2] || '').trim(),
+        identifySource: (row[3] || '').trim(),
+        idState: (row[4] || '').trim(),
+        traits: [],
+        sourceRow: i + 1,
+      };
+      if (row[5]) {
+        current.traits.push({
+          name: (row[5] || '').trim(),
+          status: normalizeStatus(row[8]),
+        });
+      }
+    } else if (current && row[5]) {
+      current.traits.push({
+        name: (row[5] || '').trim(),
+        status: normalizeStatus(row[8]),
+      });
+    }
+  }
+  if (current) events.push(current);
+
+  return events;
+}
+
+// ─── Page Tab ───
+// Named pages start at row 11 (0-indexed)
+// Columns: Priority(0) | Page Name(1) | When Fired(2) | ID state(3) |
+//          Properties(4) | Property Description(5) | Property Status(6)
+
+export function parsePageTab(rows) {
+  // Find the header row for named pages
+  let headerIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === 'Priority' && rows[i][1] === 'Page Name') {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return [];
+
+  const events = [];
+  let current = null;
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const priority = row[0];
+
+    if (priority) {
+      if (current) events.push(current);
+      current = {
+        tabType: 'page',
+        priority: normalizePriority(priority),
+        eventName: (row[1] || '').trim(),
+        whenFired: (row[2] || '').trim(),
+        idState: (row[3] || '').trim(),
+        generatingSource: 'Web',
+        properties: [],
+        sourceRow: i + 1,
+      };
+      if (row[4]) {
+        current.properties.push({
+          name: (row[4] || '').trim(),
+          description: (row[5] || '').trim(),
+          status: normalizeStatus(row[6]),
+        });
+      }
+    } else if (current && row[4]) {
+      current.properties.push({
+        name: (row[4] || '').trim(),
+        description: (row[5] || '').trim(),
+        status: normalizeStatus(row[6]),
+      });
+    }
+  }
+  if (current) events.push(current);
+
+  return events;
+}
+
+// ─── Screen Tab ───
+// Named screens start after the header row with "Priority" | "Screen Name"
+// Columns: Priority(0) | Screen Name(1) | When Fired(2) | ID state(3) |
+//          Properties(4) | Description(5) | Property Status(6)
+
+export function parseScreenTab(rows) {
+  let headerIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === 'Priority' && rows[i][1] === 'Screen Name') {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return [];
+
+  const events = [];
+  let current = null;
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const priority = row[0];
+
+    if (priority) {
+      if (current) events.push(current);
+      current = {
+        tabType: 'screen',
+        priority: normalizePriority(priority),
+        eventName: (row[1] || '').trim(),
+        whenFired: (row[2] || '').trim(),
+        idState: (row[3] || '').trim(),
+        generatingSource: 'Mobile',
+        properties: [],
+        sourceRow: i + 1,
+      };
+      if (row[4]) {
+        current.properties.push({
+          name: (row[4] || '').trim(),
+          description: (row[5] || '').trim(),
+          status: normalizeStatus(row[6]),
+        });
+      }
+    } else if (current && row[4]) {
+      current.properties.push({
+        name: (row[4] || '').trim(),
+        description: (row[5] || '').trim(),
+        status: normalizeStatus(row[6]),
+      });
+    }
+  }
+  if (current) events.push(current);
+
+  return events;
+}
+
+// ─── Helpers ───
+
+function normalizePriority(raw) {
+  if (!raw) return '';
+  const s = String(raw).trim().toUpperCase();
+  // Handle "P0C" → "P0C", "P1" → "P1", etc.
+  if (s.match(/^P\d/)) return s;
+  return s;
+}
+
+function normalizeStatus(raw) {
+  if (!raw) return 'unset';
+  const s = String(raw).trim().toLowerCase();
+  if (s === 'required') return 'Required';
+  if (s === 'optional') return 'Optional';
+  if (s === 'no') return 'No';
+  return String(raw).trim();
 }

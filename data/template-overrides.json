@@ -1,0 +1,31 @@
+{
+  "_comment": "Override template lists for events where the xlsx is stale or has errors. Key = exact event name from the Track tab. Value = array of template strings. Each entry = one Jira ticket.",
+  "Shopping link Clicked": [
+    "chat web",
+    "chat mobile app",
+    "product model web",
+    "car model web",
+    "product model mobile app",
+    "car model mobile app"
+  ],
+  "Model Viewed": [
+    "products model web",
+    "cars model web",
+    "products model mobile app",
+    "cars model mobile app",
+    "product category web",
+    "product category mobile app"
+  ],
+  "Checkout Started": [
+    "standard flow",
+    "gift",
+    "donation",
+    "native mobile app",
+    "subscription",
+    "marketplace"
+  ],
+  "Conversation Started": [
+    "chat web",
+    "chat mobile app"
+  ]
+}

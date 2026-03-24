@@ -1,4 +1,4 @@
-# AGENTS.md — sheets-to-jira
+# AGENTS.md — events-sheets-to-jira
 
 > Project-specific rules. Global rules live in `/projects/AGENTS.md` and always apply.
 
@@ -23,4 +23,4 @@ processes each tab's event rows and property columns, and creates Jira tickets
 - Comments only where the logic is non-obvious
 
 ## Project Path
-/Users/codyjuric/projects/sheets-to-jira
+/Users/codyjuric/projects/events-sheets-to-jira
