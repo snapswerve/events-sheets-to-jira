@@ -1,16 +1,16 @@
 # events-sheets-to-jira
 
-Reads an event tracking plan from an Excel workbook and generates Jira tickets — one per event instance — under a specified Epic. Built for PM-led instrumentation workflows where the tracking plan is the source of truth.
+Reads an event tracking plan from a Google Sheet (via API) or local Excel workbook and generates Jira tickets — one per event instance — under a specified Epic. Built for PM-led instrumentation workflows where the tracking plan is the source of truth.
 
 ---
 
 ## How it works
 
 ```
-eventing-plan.xlsx → parser → enricher → mapper → templates → Jira tickets
+Google Sheet (API) or .xlsx → reader → parser → enricher → mapper → templates → Jira tickets
 ```
 
-1. **Reads** an `.xlsx` workbook with tabs: Track, Identify, Page, Screen, plus two dictionary tabs (Track Properties Dictionary, Identify Traits Dictionary)
+1. **Reads** a Google Sheet via the Sheets API (recommended) or a local `.xlsx` workbook — either way, expects tabs: Track, Identify, Page, Screen, plus two dictionary tabs (Track Properties Dictionary, Identify Traits Dictionary)
 2. **Parses** each tab's event groups — priority, event name, trigger, properties/traits
 3. **Enriches** properties/traits with type, description, and example values from the dictionary tabs
 4. **Maps** each event to one or more ticket instances based on templates (e.g. "Checkout Started" fires on 6 different web/mobile templates → 6 tickets)
@@ -147,7 +147,7 @@ src/
 ├── templates.js    # 8 Jira wiki markup templates matching Segment doc types
 ├── jira.js         # Jira REST API v2 integration (create issue)
 ├── exporter.js     # Exports to xlsx matching Jira import format
-└── sheets.js       # Google Sheets helpers (for future live-sheet mode)
+└── sheets.js       # Google Sheets API client (service account auth, reads live spreadsheet)
 ```
 
 ---
