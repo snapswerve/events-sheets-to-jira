@@ -150,7 +150,7 @@ function resolveIdentifyInstances(event) {
       platform: 'Web',
     });
     instances.push({
-      templateType: 'ss-identify',
+      templateType: 'mobile-identify',
       instanceLabel: `Identify with ${event.whenFired} (mobile)`,
       platform: 'Mobile',
     });
@@ -162,7 +162,7 @@ function resolveIdentifyInstances(event) {
     });
   } else if (source.includes('mobile')) {
     instances.push({
-      templateType: 'ss-identify',
+      templateType: 'mobile-identify',
       instanceLabel: `Identify with ${event.whenFired}`,
       platform: 'Mobile',
     });

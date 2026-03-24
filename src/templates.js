@@ -368,6 +368,53 @@ h2. Acceptance Criteria
   };
 }
 
+// ─── Mobile App Identify ───
+
+export function mobileIdentify(ticket) {
+  const traits = ticket.traits || [];
+  return {
+    summary: `[Instrumentation] Mobile Identify: ${ticket.whenFired}`,
+    description: `h2. Summary
+
+Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user during their app session. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+
+h2. Event spec
+
+h3. Identify with ${ticket.whenFired}
+
+*When fired:* An identified user commits a ${ticket.whenFired}
+ * For ${ticket.idState || 'identified'} users
+
+{*}Traits{*}:
+${formatTraits(traits)}
+
+{code:JSON}
+${buildIdentifyPayloadExample(ticket, true)}
+{code}
+
+h3. Common Fields
+Every Track event includes OOB:
+ * common context documentation: https://www.twilio.com/docs/segment/connections/spec/common
+
+h2. Segment's Documentation
+[Analytics React Native Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/implementation#identify]
+[Spec: Identify|https://segment.com/docs/connections/spec/identify]
+[Troubleshooting Analytics React Native|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/troubleshooting]
+[Using the Source Debugger|https://segment.com/docs/connections/sources/debugger]
+
+h2. Acceptance Criteria
+ * Event implemented exactly as specified
+ * All required traits included
+ * Seen in Segment Debugger, matching spec
+ * Seen in Databricks, matching spec
+ * Seen in Unify Profile Explorer, matching spec
+ * Zero Protocols violations
+ * No unplanned fields or invalid property types
+ * Fires once per action
+ * Values should be set to lowercase`,
+  };
+}
+
 // ─── Template Dispatcher ───
 
 const TEMPLATE_MAP = {
@@ -378,6 +425,7 @@ const TEMPLATE_MAP = {
   'ss-identify': ssIdentify,
   'mobile-track': mobileTrack,
   'mobile-screen': mobileScreen,
+  'mobile-identify': mobileIdentify,
 };
 
 export function renderTicket(ticket) {

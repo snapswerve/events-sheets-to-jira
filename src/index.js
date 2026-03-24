@@ -37,14 +37,11 @@ async function main() {
   if (priorityFilter) console.log(`🎯 Priority filter: ${priorityFilter}`);
 
   // ─── Read ───
-  const filePath = process.env.EVENTING_PLAN_PATH || './data/eventing-plan.xlsx';
-  console.log(`📁 Reading: ${filePath}\n`);
-
   let data;
   try {
-    data = readEventingPlan(filePath);
+    data = await readEventingPlan();
   } catch (err) {
-    console.error(`❌ Could not read file: ${err.message}`);
+    console.error(`❌ Could not read eventing plan: ${err.message}`);
     process.exit(1);
   }
 
