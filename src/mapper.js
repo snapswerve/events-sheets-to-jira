@@ -1,30 +1,21 @@
 /**
  * mapper.js — Maps each event to one or more Jira ticket instances.
  *
- * Concept: A single event in the tracking plan can fire from multiple "templates"
- * (e.g. "Checkout Started" fires from standard flow, gift, donation, native mobile app).
- * Each entry in the Templates column gets its own Jira ticket.
+ * Core rule: template instances are the source of truth for permutations.
  *
- * Template overrides: data/template-overrides.json can replace the xlsx template list
- * for specific events (useful when the sheet is stale or has duplicates).
- *
- * "Generating Source" determines platform:
- *   - "Server" → SS Track / SS Identify
- *   - "Web" → Web Track / Web Page / Web Identify
- *   - "Mobile" → Mobile Track / Mobile Screen
- *   - "Web/Mobile" → platform per template (mobile keywords → Mobile, else → Web)
+ * Routing strategy:
+ * 1) Infer source family from template label first (web/mobile/ss)
+ * 2) Fall back to Generating Source only when template is ambiguous/missing
  */
 
 import fs from 'fs';
 import path from 'path';
 
-const MOBILE_KEYWORDS = ['mobile', 'app', 'native'];
-
-function isMobileTemplate(templateName) {
-  const t = templateName.toLowerCase();
-  if (t.includes('screen')) return true;
-  return MOBILE_KEYWORDS.some((kw) => t.includes(kw));
-}
+const TEMPLATE_HINTS = {
+  ss: ['server side', 'server', 'backend'],
+  mobile: ['mobile', 'app', 'native', 'ios', 'android', 'screen'],
+  web: ['web', 'page', 'browser'],
+};
 
 /**
  * Loads template overrides from JSON file if it exists.
@@ -37,7 +28,7 @@ function loadTemplateOverrides() {
     const raw = JSON.parse(fs.readFileSync(overridesPath, 'utf-8'));
     const map = new Map();
     for (const [key, val] of Object.entries(raw)) {
-      if (key.startsWith('_')) continue; // skip _comment etc.
+      if (key.startsWith('_')) continue;
       if (Array.isArray(val)) map.set(key, val);
     }
     return map;
@@ -49,16 +40,13 @@ function loadTemplateOverrides() {
 
 const templateOverrides = loadTemplateOverrides();
 
-/**
- * Resolves which Jira template type(s) apply to a given event.
- * Returns an array of { templateType, instanceLabel, platform } objects.
- */
 export function resolveInstances(event) {
   if (event.tabType === 'page') {
     return [{
       templateType: 'web-page',
       instanceLabel: `${event.eventName} page`,
       platform: 'Web',
+      routingReason: 'tab-fixed',
     }];
   }
 
@@ -67,6 +55,7 @@ export function resolveInstances(event) {
       templateType: 'mobile-screen',
       instanceLabel: `${event.eventName} screen`,
       platform: 'Mobile',
+      routingReason: 'tab-fixed',
     }];
   }
 
@@ -78,136 +67,154 @@ export function resolveInstances(event) {
 }
 
 function resolveTrackInstances(event) {
-  const instances = [];
   const source = (event.generatingSource || '').toLowerCase();
-
-  // Use override templates if present, otherwise parse from xlsx
   const overrideList = templateOverrides.get(event.eventName);
-  const templatesList = overrideList || dedupeTemplates(parseTemplatesList(event.templates));
+  const templatesList = overrideList || parseTemplatesList(event.templates);
 
-  // Pure server-side
-  if (source.includes('server') || source === 'ss') {
-    instances.push({
-      templateType: 'ss-track',
-      instanceLabel: 'server side',
-      platform: 'Server',
-    });
-    return instances;
-  }
-
-  // Web, Mobile, or Web/Mobile with specific templates
-  const isMixed = source.includes('web') && source.includes('mobile');
-
+  // If templates exist, each row is one ticket instance (preserve duplicates intentionally)
   if (templatesList.length > 0) {
-    for (const tmpl of templatesList) {
-      if (isMixed || source.includes('mobile')) {
-        if (isMobileTemplate(tmpl)) {
-          instances.push({ templateType: 'mobile-track', instanceLabel: tmpl, platform: 'Mobile' });
-        } else if (source.includes('web') || isMixed) {
-          instances.push({ templateType: 'web-track', instanceLabel: tmpl, platform: 'Web' });
+    return templatesList.map((tmpl) => {
+      const familyFromTemplate = inferFamilyFromTemplate(tmpl);
+      let family = familyFromTemplate;
+
+      // For mixed Web/Mobile sources with ambiguous template names, default to Web (safer than Mobile over-routing)
+      if (!family) {
+        if (source.includes('web') && source.includes('mobile')) {
+          family = 'web';
         } else {
-          instances.push({ templateType: 'mobile-track', instanceLabel: tmpl, platform: 'Mobile' });
+          family = inferFamilyFromSource(source) || 'web';
         }
-      } else {
-        // Pure web
-        instances.push({ templateType: 'web-track', instanceLabel: tmpl, platform: 'Web' });
       }
-    }
-  } else {
-    // No templates listed — create one per applicable platform
-    if (source.includes('web')) {
-      instances.push({ templateType: 'web-track', instanceLabel: 'web', platform: 'Web' });
-    }
-    if (source.includes('mobile')) {
-      instances.push({ templateType: 'mobile-track', instanceLabel: 'mobile app', platform: 'Mobile' });
-    }
+
+      return {
+        templateType: `${family}-track`,
+        instanceLabel: tmpl,
+        platform: familyToPlatform(family),
+        routingReason: familyFromTemplate ? 'template-keyword' : 'source-fallback',
+      };
+    });
   }
 
-  // Fallback
-  if (instances.length === 0) {
-    instances.push({ templateType: 'web-track', instanceLabel: 'default', platform: 'Web' });
-  }
-
-  return instances;
+  // No templates listed → infer from source
+  return fallbackInstancesBySource('track', source);
 }
 
 function resolveIdentifyInstances(event) {
-  const instances = [];
   const source = (event.generatingSource || '').toLowerCase();
+  const templatesList = parseTemplatesList(event.templates);
 
-  if (source.includes('server') || source === 'ss') {
+  if (templatesList.length > 0) {
+    return templatesList.map((tmpl) => {
+      const familyFromTemplate = inferFamilyFromTemplate(tmpl);
+      const family = familyFromTemplate || inferFamilyFromSource(source) || 'web';
+      return {
+        templateType: `${family}-identify`,
+        instanceLabel: tmpl,
+        platform: familyToPlatform(family),
+        routingReason: familyFromTemplate ? 'template-keyword' : 'source-fallback',
+      };
+    });
+  }
+
+  return fallbackInstancesBySource('identify', source);
+}
+
+function fallbackInstancesBySource(callType, source) {
+  const instances = [];
+  const hasWeb = source.includes('web');
+  const hasMobile = source.includes('mobile');
+  const hasServer = source.includes('server') || source.includes('ss') || source.includes('backend');
+
+  if (hasServer) {
     instances.push({
-      templateType: 'ss-identify',
-      instanceLabel: `Identify with ${event.whenFired}`,
+      templateType: `ss-${callType}`,
+      instanceLabel: 'server side',
       platform: 'Server',
+      routingReason: 'source-fallback',
     });
   }
 
-  if (source.includes('web') && source.includes('mobile')) {
+  if (hasWeb) {
     instances.push({
-      templateType: 'web-identify',
-      instanceLabel: `Identify with ${event.whenFired}`,
+      templateType: `web-${callType}`,
+      instanceLabel: callType === 'identify' ? 'web identify' : 'web',
       platform: 'Web',
-    });
-    instances.push({
-      templateType: 'mobile-identify',
-      instanceLabel: `Identify with ${event.whenFired} (mobile)`,
-      platform: 'Mobile',
-    });
-  } else if (source.includes('web')) {
-    instances.push({
-      templateType: 'web-identify',
-      instanceLabel: `Identify with ${event.whenFired}`,
-      platform: 'Web',
-    });
-  } else if (source.includes('mobile')) {
-    instances.push({
-      templateType: 'mobile-identify',
-      instanceLabel: `Identify with ${event.whenFired}`,
-      platform: 'Mobile',
+      routingReason: 'source-fallback',
     });
   }
 
-  // Fallback — source might be empty (Computed Trait, rETL)
+  if (hasMobile) {
+    instances.push({
+      templateType: `mobile-${callType}`,
+      instanceLabel: callType === 'identify' ? 'mobile identify' : 'mobile app',
+      platform: 'Mobile',
+      routingReason: 'source-fallback',
+    });
+  }
+
   if (instances.length === 0) {
     instances.push({
-      templateType: 'web-identify',
-      instanceLabel: `Identify with ${event.whenFired}`,
+      templateType: `web-${callType}`,
+      instanceLabel: 'default',
       platform: 'Web',
+      routingReason: 'default-fallback',
     });
   }
 
   return instances;
 }
 
+function inferFamilyFromTemplate(templateName = '') {
+  const t = String(templateName).toLowerCase().trim();
+  if (!t) return null;
+
+  // Strong disambiguators first
+  if (t.includes('chat mobile')) return 'mobile';
+  if (t.includes('chat web')) return 'web';
+  if (t === 'checkout success' || t.includes('checkout success')) return 'web';
+
+  // SS should only match clear server-side indicators (avoid matching the letters "ss" in words like "success")
+  if (t.includes('server side') || t.includes('server') || t.includes('backend')) return 'ss';
+
+  for (const hint of TEMPLATE_HINTS.mobile) {
+    if (t.includes(hint)) return 'mobile';
+  }
+  for (const hint of TEMPLATE_HINTS.web) {
+    if (t.includes(hint)) return 'web';
+  }
+
+  return null;
+}
+
+function inferFamilyFromSource(source = '') {
+  const s = String(source).toLowerCase();
+  if (!s) return null;
+  if (s.includes('server') || s.includes('ss') || s.includes('backend')) return 'ss';
+  if (s.includes('mobile')) return 'mobile';
+  if (s.includes('web')) return 'web';
+  return null;
+}
+
+function familyToPlatform(family) {
+  if (family === 'ss') return 'Server';
+  if (family === 'mobile') return 'Mobile';
+  return 'Web';
+}
+
 /**
- * Parses the "Templates" column (newline-separated list) into an array.
+ * Parses the "Templates" column into an array.
+ * Supports newline / semicolon / comma separated values.
  */
 function parseTemplatesList(raw) {
   if (!raw) return [];
-  return raw
-    .split(/\n/)
+  return String(raw)
+    .split(/\n|;|,/)
     .map((s) => s.trim())
     .filter(Boolean);
 }
 
 /**
- * Deduplicates template entries (e.g. "donation" appearing twice).
- * Each unique template = one ticket. Exact dupes are removed.
- */
-function dedupeTemplates(templates) {
-  const seen = new Set();
-  return templates.filter((t) => {
-    const key = t.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-/**
  * Main export: takes all parsed events and returns a flat list of ticket instances.
- * Each instance = one Jira ticket to create.
  */
 export function mapEventsToInstances(events) {
   const tickets = [];
@@ -220,6 +227,7 @@ export function mapEventsToInstances(events) {
         templateType: instance.templateType,
         instanceLabel: instance.instanceLabel,
         platform: instance.platform,
+        routingReason: instance.routingReason,
       });
     }
   }

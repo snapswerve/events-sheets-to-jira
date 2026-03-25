@@ -50,11 +50,11 @@ GOOGLE_SERVICE_ACCOUNT_KEY_PATH=./service-account-key.json
 
 **Option B: Local `.xlsx` file (fallback — for when API access isn't available)**
 
-Download the Google Sheet as `.xlsx` and place it at `./data/eventing-plan.xlsx` (this file is gitignored — it contains company-specific data).
+Download the Google Sheet as `.xlsx` and place it at `./data/cr-eventing-plan.xlsx` (this file is gitignored — it contains company-specific data).
 
 Then set this in your `.env`:
 ```
-EVENTING_PLAN_PATH=./data/eventing-plan.xlsx
+EVENTING_PLAN_PATH=./data/cr-eventing-plan.xlsx
 ```
 
 Either way, the workbook should have these tabs:
@@ -117,8 +117,11 @@ node src/index.js
 # Dry run — P1 events only
 node src/index.js --priority P1
 
-# Export to xlsx for Jira CSV import
+# Export to xlsx for Jira import
 node src/index.js --priority P1 --export
+
+# Export to CSV for Jira import
+node src/index.js --priority P1 --export --format csv
 
 # Live — create real Jira tickets
 node src/index.js --priority P1 --live
@@ -146,7 +149,7 @@ src/
 ├── mapper.js       # Maps events → ticket instances (one per template)
 ├── templates.js    # 8 Jira wiki markup templates matching Segment doc types
 ├── jira.js         # Jira REST API v2 integration (create issue)
-├── exporter.js     # Exports to xlsx matching Jira import format
+├── exporter.js     # Exports to xlsx/csv matching Jira import format
 └── sheets.js       # Google Sheets API client (service account auth, reads live spreadsheet)
 ```
 

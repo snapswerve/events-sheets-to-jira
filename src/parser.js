@@ -61,8 +61,8 @@ export function parseTrackTab(rows) {
 }
 
 // ─── Identify Tab ───
-// Columns: Priority(0) | Generating Source(1) | When fires(2) | Identify source(3) |
-//          ID state(4) | Traits(5) | Ticket PROD(6) | In prod(7) | Trait Status(8)
+// Columns: Priority(0) | Generating Source(1) | When fires(2) | ID state(3) |
+//          Templates(4) | Team(5) | Traits(6) | Ticket PROD(7) | In prod(8) | Trait Status(9)
 
 export function parseIdentifyTab(rows) {
   if (rows.length < 2) return [];
@@ -81,21 +81,22 @@ export function parseIdentifyTab(rows) {
         priority: normalizePriority(priority),
         generatingSource: (row[1] || '').trim(),
         whenFired: (row[2] || '').trim(),
-        identifySource: (row[3] || '').trim(),
-        idState: (row[4] || '').trim(),
+        idState: (row[3] || '').trim(),
+        templates: (row[4] || '').trim(),
+        teamOwnership: (row[5] || '').trim(),
         traits: [],
         sourceRow: i + 1,
       };
-      if (row[5]) {
+      if (row[6]) {
         current.traits.push({
-          name: (row[5] || '').trim(),
-          status: normalizeStatus(row[8]),
+          name: (row[6] || '').trim(),
+          status: normalizeStatus(row[9]),
         });
       }
-    } else if (current && row[5]) {
+    } else if (current && row[6]) {
       current.traits.push({
-        name: (row[5] || '').trim(),
-        status: normalizeStatus(row[8]),
+        name: (row[6] || '').trim(),
+        status: normalizeStatus(row[9]),
       });
     }
   }

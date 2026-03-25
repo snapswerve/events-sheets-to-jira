@@ -1,10 +1,5 @@
 /**
- * exporter.js — Exports tickets to XLSX matching the Jira Import Template format.
- *
- * Concept: Jira supports CSV/XLSX import. The template has these columns:
- *   Summary | Issue Type | Status | Project key | ... | Priority | Labels | Description | Epic Link
- *
- * We fill Summary, Issue Type, Priority, Labels, Description, and Epic Link.
+ * exporter.js — Exports tickets to XLSX/CSV matching Jira import needs.
  */
 
 import XLSX from 'xlsx';
@@ -47,18 +42,10 @@ const PRIORITY_MAP = {
   P3: 'Low',
 };
 
-/**
- * Exports rendered tickets to an xlsx file.
- *
- * @param {Array<{ summary, description, priority, platform, templateType }>} renderedTickets
- * @param {Object} opts - { projectKey, epicKey, outputDir }
- * @returns {string} path to the generated xlsx file
- */
-export function exportToXlsx(renderedTickets, opts = {}) {
+function buildRows(renderedTickets, opts = {}) {
   const {
-    projectKey = 'TRACK',
-    epicKey = '',
-    outputDir = './output',
+    projectKey = process.env.JIRA_PROJECT_KEY || 'DP',
+    epicKey = process.env.JIRA_EPIC_KEY || 'DP-117',
   } = opts;
 
   const rows = [JIRA_HEADERS];
@@ -68,16 +55,23 @@ export function exportToXlsx(renderedTickets, opts = {}) {
     const priority = PRIORITY_MAP[ticket.priority?.toUpperCase()] || 'Medium';
 
     const row = new Array(JIRA_HEADERS.length).fill('');
-    row[0] = ticket.summary;           // Summary
-    row[1] = 'Story';                  // Issue Type
-    row[3] = projectKey;               // Project key
-    row[8] = priority;                 // Priority
-    row[19] = labels.join(' ');        // Labels (space-separated for Jira import)
-    row[20] = ticket.description;      // Description
-    row[24] = epicKey;                 // Epic Link
+    row[0] = ticket.summary;
+    row[1] = 'Story';
+    row[3] = projectKey;
+    row[8] = priority;
+    row[19] = labels.join(' ');
+    row[20] = ticket.description;
+    row[24] = epicKey;
 
     rows.push(row);
   }
+
+  return rows;
+}
+
+export function exportToXlsx(renderedTickets, opts = {}) {
+  const { outputDir = './output' } = opts;
+  const rows = buildRows(renderedTickets, opts);
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -93,6 +87,34 @@ export function exportToXlsx(renderedTickets, opts = {}) {
 
   XLSX.writeFile(wb, filePath);
   return filePath;
+}
+
+export function exportToCsv(renderedTickets, opts = {}) {
+  const { outputDir = './output' } = opts;
+  const rows = buildRows(renderedTickets, opts);
+
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().slice(0, 10);
+  const fileName = `jira-import-${timestamp}.csv`;
+  const filePath = path.join(outputDir, fileName);
+
+  const csv = rows
+    .map((row) => row.map(csvSafe).join(','))
+    .join('\n');
+
+  fs.writeFileSync(filePath, csv, 'utf-8');
+  return filePath;
+}
+
+function csvSafe(value) {
+  const s = String(value ?? '');
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
 }
 
 function buildLabels(ticket) {

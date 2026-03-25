@@ -17,13 +17,18 @@ import { buildTrackPropsDict, buildIdentifyTraitsDict, enrichTrackEvents, enrich
 import { mapEventsToInstances } from './mapper.js';
 import { renderTicket } from './templates.js';
 import { createJiraTicket } from './jira.js';
-import { exportToXlsx } from './exporter.js';
+import { exportToXlsx, exportToCsv } from './exporter.js';
+import fs from 'fs';
+import path from 'path';
 
 // ─── Parse CLI args ───
 const args = process.argv.slice(2);
 const priorityFilter = getArgValue(args, '--priority');
 const isLive = args.includes('--live');
 const isExport = args.includes('--export');
+const exportFormatArg = getArgValue(args, '--format');
+const exportFormat = exportFormatArg ? exportFormatArg.toLowerCase() : 'xlsx';
+const debugRouting = args.includes('--debug-routing');
 const isDryRun = !isLive && !isExport;
 
 function getArgValue(args, flag) {
@@ -31,8 +36,16 @@ function getArgValue(args, flag) {
   return idx !== -1 && args[idx + 1] ? args[idx + 1].toUpperCase() : null;
 }
 
+function csvSafe(value) {
+  const s = String(value ?? '');
+  if (/[",\n]/.test(s)) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
 async function main() {
-  const mode = isLive ? '🔴 LIVE (creating tickets)' : isExport ? '📦 EXPORT (generating xlsx)' : '👀 DRY RUN (preview only)';
+  const mode = isLive ? '🔴 LIVE (creating tickets)' : isExport ? `📦 EXPORT (generating ${exportFormat})` : '👀 DRY RUN (preview only)';
   console.log(`\n🚀 sheets-to-jira — ${mode}`);
   if (priorityFilter) console.log(`🎯 Priority filter: ${priorityFilter}`);
 
@@ -97,6 +110,45 @@ async function main() {
     return { ...ticket, ...rendered };
   });
 
+  // ─── Optional routing debug report ───
+  if (debugRouting) {
+    const outDir = './output';
+    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const debugPath = path.join(outDir, `routing-debug-${ts}.csv`);
+
+    const headers = [
+      'event_name',
+      'tab_type',
+      'call_type',
+      'priority',
+      'source_raw',
+      'template_instance',
+      'resolved_template_type',
+      'platform',
+      'routing_reason',
+      'source_row',
+    ];
+
+    const rows = renderedTickets.map((t) => [
+      csvSafe(t.eventName || t.whenFired || ''),
+      csvSafe(t.tabType || ''),
+      csvSafe(t.tabType === 'identify' ? 'identify' : t.tabType === 'page' ? 'page' : t.tabType === 'screen' ? 'screen' : 'track'),
+      csvSafe(t.priority || ''),
+      csvSafe(t.generatingSource || ''),
+      csvSafe(t.instanceLabel || ''),
+      csvSafe(t.templateType || ''),
+      csvSafe(t.platform || ''),
+      csvSafe(t.routingReason || ''),
+      csvSafe(String(t.sourceRow || '')),
+    ]);
+
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    fs.writeFileSync(debugPath, csv, 'utf-8');
+    console.log(`🧭 Routing debug report written: ${debugPath}`);
+  }
+
   // ─── Output ───
   if (isDryRun) {
     console.log(`\n${'─'.repeat(60)}`);
@@ -117,11 +169,19 @@ async function main() {
   }
 
   if (isExport) {
-    const outputPath = exportToXlsx(renderedTickets, {
-      projectKey: process.env.JIRA_PROJECT_KEY || 'TRACK',
-      epicKey: process.env.JIRA_EPIC_KEY || '',
+    const exportOpts = {
+      projectKey: process.env.JIRA_PROJECT_KEY || 'DP',
+      epicKey: process.env.JIRA_EPIC_KEY || 'DP-117',
       outputDir: './output',
-    });
+    };
+
+    let outputPath;
+    if (exportFormat === 'csv') {
+      outputPath = exportToCsv(renderedTickets, exportOpts);
+    } else {
+      outputPath = exportToXlsx(renderedTickets, exportOpts);
+    }
+
     console.log(`\n📦 Exported ${renderedTickets.length} tickets to: ${outputPath}`);
   }
 

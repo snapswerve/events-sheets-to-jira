@@ -31,7 +31,7 @@ export async function readEventingPlan() {
     return readFromGoogleSheets();
   }
 
-  const filePath = process.env.EVENTING_PLAN_PATH || './data/eventing-plan.xlsx';
+  const filePath = process.env.EVENTING_PLAN_PATH || './data/cr-eventing-plan.xlsx';
   console.log(`📁 Reading local file: ${filePath}`);
   return readFromXlsx(filePath);
 }
