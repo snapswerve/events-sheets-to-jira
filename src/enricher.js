@@ -8,52 +8,67 @@
  * The parser gives us property/trait names. The enricher looks up the details.
  */
 
+import { findColumns, missingHeadersMessage, rowReader } from './columns.js';
+
+const TRACK_DICT_COLUMNS = {
+  name: ['Property', 'Properties'],
+  type: ['Property Type', 'Data Type', 'Type'],
+  description: ['Property Description', 'Description'],
+  exampleValues: ['Example Values', 'Examples'],
+};
+
+const IDENTIFY_DICT_COLUMNS = {
+  name: ['Trait', 'Traits'],
+  type: ['Data Type', 'Trait Type', 'Type'],
+  description: ['Description', 'Trait Description'],
+  exampleValues: ['Example Values', 'Examples'],
+  whenFired: ['When fired'],
+};
+
 /**
  * Builds a lookup map from the Track Properties Dictionary.
  * Key: property name (lowercase), Value: { type, description, exampleValues }
  *
- * Track Props Dict columns:
- *   Properties(0) | Property Type(1) | Property Description(2) | Example Values(3)
+ * Columns (found by header): Property | Property Type | Property Description | Example Values
+ * Nested properties use their full path, e.g. "products.$.sku".
  */
 export function buildTrackPropsDict(rows) {
-  const dict = new Map();
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const name = (row[0] || '').trim();
-    if (!name) continue;
-    dict.set(name.toLowerCase(), {
-      name,
-      type: (row[1] || 'string').trim(),
-      description: (row[2] || '').trim(),
-      exampleValues: (row[3] || '').toString().trim(),
-    });
-  }
-  return dict;
+  return buildDict(rows, 'Track Properties Dictionary', TRACK_DICT_COLUMNS);
 }
 
 /**
  * Builds a lookup map from the Identify Traits Dictionary.
  * Key: trait name (lowercase), Value: { type, description, exampleValues, whenFired }
  *
- * Identify Traits Dict columns:
- *   Priority(0) | Trait(1) | Data Type(2) | Description(3) | Example Values(4) | When fired(5)
+ * Columns (found by header): Priority | Trait | Data Type | Description | Example Values | When fired
  */
 export function buildIdentifyTraitsDict(rows) {
+  return buildDict(rows, 'Identify Traits Dictionary', IDENTIFY_DICT_COLUMNS);
+}
+
+function buildDict(rows, tabName, columns) {
   const dict = new Map();
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const name = (row[1] || '').trim();
-    if (!name) continue;
+  if (rows.length === 0) return dict;
+
+  const found = findColumns(rows, columns, ['name']);
+  if (!found) {
+    console.warn(`⚠️  ${missingHeadersMessage(tabName, columns, ['name'])}`);
+    return dict;
+  }
+
+  const get = rowReader(found.cols);
+  for (let i = found.headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const name = get(row, 'name');
     // Don't overwrite — first entry wins (usually the most specific)
-    if (!dict.has(name.toLowerCase())) {
-      dict.set(name.toLowerCase(), {
-        name,
-        type: (row[2] || 'string').trim(),
-        description: (row[3] || '').trim(),
-        exampleValues: (row[4] || '').toString().trim(),
-        whenFired: (row[5] || '').trim(),
-      });
-    }
+    if (!name || dict.has(name.toLowerCase())) continue;
+    dict.set(name.toLowerCase(), {
+      name,
+      type: get(row, 'type') || 'string',
+      description: get(row, 'description'),
+      exampleValues: get(row, 'exampleValues'),
+      whenFired: get(row, 'whenFired'),
+    });
   }
   return dict;
 }
@@ -64,16 +79,7 @@ export function buildIdentifyTraitsDict(rows) {
 export function enrichTrackEvents(events, trackDict) {
   for (const event of events) {
     for (const prop of event.properties) {
-      const lookup = trackDict.get(prop.name.toLowerCase());
-      if (lookup) {
-        prop.type = prop.type || lookup.type;
-        prop.description = prop.description || lookup.description;
-        prop.exampleValues = prop.exampleValues || lookup.exampleValues;
-      } else {
-        prop.type = prop.type || 'string';
-        prop.description = prop.description || '';
-        prop.exampleValues = prop.exampleValues || '';
-      }
+      enrichField(prop, trackDict.get(prop.name.toLowerCase()));
     }
   }
   return events;
@@ -85,16 +91,7 @@ export function enrichTrackEvents(events, trackDict) {
 export function enrichIdentifyEvents(events, identifyDict) {
   for (const event of events) {
     for (const trait of event.traits) {
-      const lookup = identifyDict.get(trait.name.toLowerCase());
-      if (lookup) {
-        trait.type = trait.type || lookup.type;
-        trait.description = trait.description || lookup.description;
-        trait.exampleValues = trait.exampleValues || lookup.exampleValues;
-      } else {
-        trait.type = trait.type || 'string';
-        trait.description = trait.description || '';
-        trait.exampleValues = trait.exampleValues || '';
-      }
+      enrichField(trait, identifyDict.get(trait.name.toLowerCase()));
     }
   }
   return events;
@@ -105,4 +102,15 @@ export function enrichIdentifyEvents(events, identifyDict) {
  */
 export function enrichPageScreenEvents(events, trackDict) {
   return enrichTrackEvents(events, trackDict);
+}
+
+/**
+ * Fills type/description/examples from a dictionary entry. When the field isn't in the
+ * dictionary, the type falls back to "string" and inDictionary=false lets the ticket flag it.
+ */
+function enrichField(field, lookup) {
+  field.inDictionary = Boolean(lookup);
+  field.type = field.type || lookup?.type || 'string';
+  field.description = field.description || lookup?.description || '';
+  field.exampleValues = field.exampleValues || lookup?.exampleValues || '';
 }

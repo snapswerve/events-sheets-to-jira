@@ -1,0 +1,6 @@
+{
+  "notes": [
+    { "title": "Web-only note", "platforms": ["web"], "body": "Applies to web tickets." },
+    { "title": "Page-only note", "templateTypes": ["web-page"], "body": "Applies to web page tickets." }
+  ]
+}

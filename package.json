@@ -4,9 +4,16 @@
   "description": "Reads a Google Sheets event tracking plan and creates Jira tickets under an Epic.",
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node src/index.js",
-    "dry-run": "DRY_RUN=true node src/index.js"
+    "dry-run": "node src/index.js",
+    "export": "node src/index.js --export",
+    "live": "node src/index.js --live",
+    "sample": "node examples/build-sample-plan.js && GOOGLE_SHEETS_MODE=false EVENTING_PLAN_PATH=examples/sample-eventing-plan.xlsx node src/index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
