@@ -9,7 +9,9 @@
  * It covers all 8 ticket templates plus the cases the Developer Notes handle: nested properties
  * (address.city, products.$.sku), per-property comments, a property missing from the dictionary,
  * an unset status, a platform guessed from Generating Source, and an event that already lists
- * Jira tickets.
+ * Jira tickets. For the page-load rule: a page-load track that matches a page event (Checkout
+ * Started → Checkout), one with no matching page (Article Viewed), and a page view filed on the
+ * Track tab (Home Viewed).
  */
 
 import XLSX from 'xlsx';
@@ -47,6 +49,8 @@ const track = tab(TRACK_HEADERS, [
   { 'Property Priority': 'P1', Properties: 'products.$.price', 'Property Status': 'Required' },
   { 'Property Priority': 'P2', Properties: 'products.$.quantity', 'Property Status': 'Required', Comments: 'always 1 for memberships' },
   { 'Property Priority': 'P2', Properties: 'coupon_code' },
+  { 'Property Priority': 'P1', Properties: 'page_name', 'Property Status': 'Required' },
+  { 'Property Priority': 'P1', Properties: 'platform' },
   {
     Priority: 'P0', 'Generating Source': 'Server', 'Product Section': 'Checkout', 'Event Name': 'Order Completed',
     'When Fired': 'the payments service captures payment for an order', 'ID state': 'Identified',
@@ -64,6 +68,17 @@ const track = tab(TRACK_HEADERS, [
     'Property Priority': 'P2', Properties: 'query', 'Property Status': 'Required',
   },
   { 'Property Priority': 'P2', Properties: 'result_count', 'Property Status': 'Optional' },
+  {
+    Priority: 'P2', 'Generating Source': 'Web', 'Product Section': 'Content', 'Event Name': 'Article Viewed',
+    'When Fired': 'When user loads an article page', 'ID state': 'Both', Templates: 'article web', 'Team Ownership': 'CMS',
+    'Property Priority': 'P2', Properties: 'page_name', 'Property Status': 'Required',
+  },
+  { 'Property Priority': 'P2', Properties: 'content_id', 'Property Status': 'Required' },
+  {
+    Priority: 'P2', 'Generating Source': 'Web; Mobile', 'Product Section': 'Home', 'Event Name': 'Home Viewed',
+    'When Fired': 'On home page/screen load', 'ID state': 'Both', Templates: 'web\nmobile app', 'Team Ownership': 'CMS',
+    'Property Priority': 'P2', Properties: 'section', 'Property Status': 'Optional',
+  },
 ]);
 
 // ─── Identify ───
@@ -141,6 +156,10 @@ const trackDict = tab(['Property', 'Property Type', 'Property Description', 'Exa
   { Property: 'template_version', 'Property Type': 'string', 'Property Description': 'version of the template for this page', 'Example Values': 'version 1' },
   { Property: 'cart_value', 'Property Type': 'decimal', 'Property Description': 'cart total in USD', 'Example Values': 120.5 },
   { Property: 'product_id', 'Property Type': 'string', 'Property Description': 'product identifier', 'Example Values': 'p_123' },
+  { Property: 'page_name', 'Property Type': 'string', 'Property Description': 'page name (short, same for like pages)', 'Example Values': 'Article, Model, Checkout' },
+  { Property: 'content_id', 'Property Type': 'string', 'Property Description': 'content identifier', 'Example Values': 'c_42' },
+  { Property: 'section', 'Property Type': 'string', 'Property Description': 'section of the page', 'Example Values': 'hero' },
+  { Property: 'platform', 'Property Type': 'string', 'Property Description': 'platform action took place on', 'Example Values': 'web, app' },
 ]);
 
 const identifyDict = tab(['Priority', 'Trait', 'Data Type', 'Description', 'Example Values', 'When fired'], [

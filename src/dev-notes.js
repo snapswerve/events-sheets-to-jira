@@ -5,7 +5,7 @@
  *   - a properties/traits table (property, type, description, example values, status)
  *   - a copy-paste implementation snippet for the platform's SDK
  *     (Analytics.js for web, Analytics React Native for mobile, Java for server-side)
- *   - team notes: standing instructions from data/team-notes.json (local, gitignored)
+ *   - notes and checks from company rules (rules.js), attached to the ticket as ruleNotes/ruleQuestions
  *   - an implementation checklist and QA steps for the platform
  *   - context from the plan row (owner, comments, code example, link to the row)
  *   - open questions detected in the spec (unknown types, unset status, guessed routing)
@@ -14,14 +14,11 @@
  * "$" is an array item); snippets and payloads expand them into nested objects/arrays.
  */
 
-import fs from 'fs';
-import path from 'path';
 import { getTabName } from './links.js';
 
 const SAMPLE_TIMESTAMP = '2026-02-24T03:25:53.802Z';
 const SAMPLE_DATE = '2026-02-24';
 const JIRA_KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/g;
-const DEFAULT_TEAM_NOTES_PATH = new URL('../data/team-notes.json', import.meta.url);
 
 // ─── Ticket shape helpers ───
 
@@ -46,7 +43,10 @@ export function looksLikeJiraKey(value) {
 
 // ─── Properties / traits table ───
 
-export function formatFieldTable(fields, label = 'Property') {
+/**
+ * @param {Object} wrapper - from company rules; properties it provides show "set by <wrapper>" as their status
+ */
+export function formatFieldTable(fields, label = 'Property', wrapper) {
   if (!fields || fields.length === 0) return ' * (none specified)';
   const header = `||${label}||Type||Description||Example values||Status||`;
   const rows = fields.map((f) =>
@@ -55,10 +55,14 @@ export function formatFieldTable(fields, label = 'Property') {
       tableCell(f.type || 'string'),
       tableCell(f.description),
       tableCell(f.exampleValues),
-      tableCell(f.status === 'unset' ? 'not set' : f.status),
+      tableCell(isProvided(f, wrapper) ? `set by ${wrapper.name}` : f.status === 'unset' ? 'not set' : f.status),
     ].join('|'),
   );
   return [header, ...rows.map((r) => `|${r}|`)].join('\n');
+}
+
+function isProvided(field, wrapper) {
+  return Boolean(wrapper?.provides.includes(field.name.toLowerCase()));
 }
 
 // ─── Sample values ───
@@ -80,6 +84,8 @@ export function normalizeType(type) {
  * the first example value from the dictionary when there is one.
  */
 export function sampleValue(field) {
+  // Set by company rules when the value is known exactly (e.g. page_name on a page-load track)
+  if (field.expectedValue !== undefined) return field.expectedValue;
   const raw = String(field.exampleValues || '').trim();
   const json = tryParseJson(raw);
   const first = firstExample(raw);
@@ -162,24 +168,53 @@ function sampleTree(node) {
 
 export function codeSnippet(ticket) {
   const { family, call } = callInfo(ticket);
-  const tree = buildFieldTree(ticketFields(ticket));
+  const { wrapper } = ticket;
+  // Properties the company's wrapper sets itself are left out of the call
+  const fields = ticketFields(ticket);
+  const tree = buildFieldTree(fields.filter((f) => !isProvided(f, wrapper)));
+  const provided = fields.filter((f) => isProvided(f, wrapper)).map((f) => f.name);
+  const providedComment = provided.length > 0 ? `\n// Set by ${wrapper.name} — don't pass: ${provided.join(', ')}` : '';
   const trigger = oneLine(ticket.whenFired);
+  const comment = trigger ? `// ${triggerComment(call, trigger)}\n` : '';
 
-  if (family === 'ss') {
-    return { lang: 'java', code: javaSnippet(ticket, call, tree, trigger) };
+  if (wrapper?.snippet) {
+    const name = call === 'identify' ? ticket.whenFired : ticket.eventName;
+    return { lang: wrapper.lang, code: `${comment}${fillSnippet(wrapper.snippet, name, tree)}${providedComment}` };
   }
 
-  const comment = trigger ? `// ${triggerComment(call, trigger)}\n` : '';
+  if (family === 'ss') {
+    return { lang: 'java', code: javaSnippet(ticket, call, tree, trigger) + providedComment };
+  }
+
   const target = call === 'identify' ? 'userId' : jsLiteral(ticket.eventName);
   const args = tree.children.size > 0 ? `, {\n${jsEntries(tree.children, '  ').join('\n')}\n}` : '';
 
   if (family === 'mobile') {
     return {
       lang: 'javascript',
-      code: `// @segment/analytics-react-native\n${comment}const { ${call} } = useAnalytics();\n\n${call}(${target}${args});`,
+      code: `// @segment/analytics-react-native\n${comment}const { ${call} } = useAnalytics();\n\n${call}(${target}${args});${providedComment}`,
     };
   }
-  return { lang: 'javascript', code: `// Analytics.js\n${comment}analytics.${call}(${target}${args});` };
+  return { lang: 'javascript', code: `// Analytics.js\n${comment}analytics.${call}(${target}${args});${providedComment}` };
+}
+
+/**
+ * Fills a company snippet template: {{name}} → quoted event/page name, {{props}} → the
+ * properties object, indented to match the line it sits on.
+ */
+function fillSnippet(template, name, tree) {
+  return template
+    .split('\n')
+    .map((line) => {
+      let out = line.replace(/\{\{name\}\}/g, jsLiteral(String(name || '')));
+      if (out.includes('{{props}}')) {
+        const indent = out.match(/^\s*/)[0];
+        const props = tree.children.size > 0 ? `{\n${jsEntries(tree.children, `${indent}  `).join('\n')}\n${indent}}` : '{}';
+        out = out.replace('{{props}}', props);
+      }
+      return out;
+    })
+    .join('\n');
 }
 
 // On the Identify tab, "When fires" names the track call the identify accompanies
@@ -271,40 +306,6 @@ function javaLiteral(value, field) {
 function fieldComment(field) {
   const status = !field.status || field.status === 'unset' ? 'status not set' : field.status.toLowerCase();
   return `// ${field.type || 'string'}, ${status}`;
-}
-
-// ─── Team notes ───
-
-/**
- * Notes from data/team-notes.json (or TEAM_NOTES_PATH) that apply to this ticket. The file is
- * gitignored because notes often link to internal tickets; data/team-notes.example.json shows
- * the format. A note can be limited with
- * "platforms" (web, mobile, server) and/or "templateTypes" (e.g. "web-page"); without either
- * it applies to every ticket.
- */
-export function getTeamNotes(ticket) {
-  const platform = String(ticket.platform || '').toLowerCase();
-  return loadTeamNotes().filter((note) => {
-    if (note.platforms?.length && !note.platforms.map((p) => p.toLowerCase()).includes(platform)) return false;
-    if (note.templateTypes?.length && !note.templateTypes.includes(ticket.templateType)) return false;
-    return true;
-  });
-}
-
-let teamNotesCache;
-
-function loadTeamNotes() {
-  if (teamNotesCache) return teamNotesCache;
-  teamNotesCache = [];
-  const notesPath = process.env.TEAM_NOTES_PATH ? path.resolve(process.env.TEAM_NOTES_PATH) : DEFAULT_TEAM_NOTES_PATH;
-  if (!fs.existsSync(notesPath)) return teamNotesCache;
-  try {
-    const raw = JSON.parse(fs.readFileSync(notesPath, 'utf-8'));
-    teamNotesCache = (raw.notes || []).filter((note) => note.title && note.body);
-  } catch (err) {
-    console.warn(`⚠️  Could not parse ${notesPath} — skipping team notes (${err.message})`);
-  }
-  return teamNotesCache;
 }
 
 // ─── Checklist & QA ───
@@ -415,7 +416,7 @@ export function getOpenQuestions(ticket) {
     questions.push(`Not in the ${dict}, so the data type was assumed to be string: ${notInDict.join(', ')} — confirm type and allowed values.`);
   }
 
-  const unset = fields.filter((f) => f.status === 'unset').map((f) => `{{${f.name}}}`);
+  const unset = fields.filter((f) => f.status === 'unset' && !isProvided(f, ticket.wrapper)).map((f) => `{{${f.name}}}`);
   if (unset.length > 0) {
     questions.push(`Required/optional status isn't set for: ${unset.join(', ')}.`);
   }
@@ -429,7 +430,7 @@ export function getOpenQuestions(ticket) {
     questions.push(`The tracking plan already lists ${keys.join(', ')} for this event — confirm this ticket isn't a duplicate.`);
   }
 
-  return questions;
+  return [...questions, ...(ticket.ruleQuestions || [])];
 }
 
 // ─── Tracking plan context ───
@@ -482,7 +483,7 @@ export function developerNotes(ticket, { devNotes = true } = {}) {
   if (questions.length > 0) {
     sections.push(`h3. (!) Open questions\n${questions.map((q) => ` * ${q}`).join('\n')}`);
   }
-  for (const note of getTeamNotes(ticket)) {
+  for (const note of ticket.ruleNotes || []) {
     sections.push(`h3. ${note.title}\n${note.body}`);
   }
   sections.push(`h3. Implementation\n{code:${lang}}\n${code}\n{code}`);

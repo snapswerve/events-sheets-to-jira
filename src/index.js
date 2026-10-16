@@ -18,6 +18,7 @@ import { readEventingPlan } from './reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets, isTicketed, JIRA_DESCRIPTION_LIMIT } from './pipeline.js';
 import { getOpenQuestions } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
+import { loadCompanyConfig, describeConfig, findMisfiledTracks, rowKey } from './rules.js';
 import { getJiraConfig, detectJiraSetup, createJiraTicket, findExistingTickets, issueUrl } from './jira.js';
 import { exportToXlsx, exportToCsv, outputPath, toCsv } from './exporter.js';
 
@@ -35,6 +36,7 @@ Filters (lists are comma-separated):
   --platform web,mobile  Only these platforms: web, mobile, server
   --event "checkout"     Only events whose name (or identify trigger) contains this text
   --skip-ticketed        Leave out events whose Jira Tickets column in the plan already lists a ticket
+  --include-flagged      Ticket track events the page-load rule flags as likely page views (held back by default)
   --limit N              Only the first N tickets — handy for a first --live test
 
 Output:
@@ -48,7 +50,7 @@ Live mode:
 `;
 
 const VALUE_FLAGS = ['--priority', '--type', '--platform', '--event', '--limit', '--format'];
-const BOOLEAN_FLAGS = ['--live', '--export', '--verbose', '--no-dev-notes', '--debug-routing', '--skip-ticketed', '--yes', '--force', '--help'];
+const BOOLEAN_FLAGS = ['--live', '--export', '--verbose', '--no-dev-notes', '--debug-routing', '--skip-ticketed', '--include-flagged', '--yes', '--force', '--help'];
 const TAB_TYPES = ['track', 'identify', 'page', 'screen'];
 const PLATFORMS = ['web', 'mobile', 'server'];
 
@@ -115,6 +117,7 @@ function parseOptions(argv) {
     debugRouting: flags.has('--debug-routing'),
     yes: flags.has('--yes'),
     force: flags.has('--force'),
+    includeFlagged: flags.has('--include-flagged'),
     eventFilters: {
       priorities: parseList(values['--priority'], { flag: '--priority', upper: true }),
       types: parseList(values['--type'], { flag: '--type', allowed: TAB_TYPES }),
@@ -171,8 +174,11 @@ async function main() {
   console.log(`📖 Identify Traits Dictionary: ${identifyDict.size} entries`);
   logTabCounts('📊 Parsed events:', events);
 
+  const config = loadCompanyConfig();
+  console.log(`🧩 Company rules: ${describeConfig(config) || 'none (add data/company.json to turn rules on — see README)'}`);
+
   // ─── Filter ───
-  const selected = filterEvents(events, opts.eventFilters);
+  let selected = filterEvents(events, opts.eventFilters);
   if (filterSummary) logTabCounts('🎯 After filters:', selected);
 
   if (opts.eventFilters.skipTicketed) {
@@ -183,9 +189,25 @@ async function main() {
     if (ticketed > 0) console.log(`   ℹ️  ${plural(ticketed, 'selected event')} already ${ticketed === 1 ? 'lists' : 'list'} a Jira ticket in the plan — add --skip-ticketed to leave ${ticketed === 1 ? 'it' : 'them'} out`);
   }
 
+  // ─── Plan check: track events that look like page views ───
+  const misfiled = findMisfiledTracks(events, config);
+  if (misfiled.length > 0) {
+    const marker = config.rules.pageLoad.markerProperty;
+    const [verb, have] = misfiled.length === 1 ? ['reads', 'has'] : ['read', 'have'];
+    console.log(`\n🧹 Plan check: ${plural(misfiled.length, 'track event')} ${verb} like a page/screen load but ${have} no ${marker} — likely page views that belong on the Page/Screen tab:`);
+    for (const e of misfiled) console.log(`   - ${e.eventName} (Track row ${e.sourceRow}): "${e.whenFired.replace(/\s+/g, ' ')}"`);
+
+    const heldRows = new Set(misfiled.map(rowKey));
+    const held = selected.filter((e) => heldRows.has(rowKey(e)));
+    if (held.length > 0 && config.rules.pageLoad.holdMisfiledTracks && !opts.includeFlagged) {
+      selected = selected.filter((e) => !heldRows.has(rowKey(e)));
+      console.log(`   ⏸️  Held back ${plural(held.length, 'event')} from ticketing — fix the plan, or add --include-flagged`);
+    }
+  }
+
   // ─── Map + render ───
   const tickets = filterTickets(
-    buildTickets(selected, { source: { spreadsheetId: data.spreadsheetId, tabGids: data.tabGids }, devNotes: opts.devNotes }),
+    buildTickets(selected, { source: { spreadsheetId: data.spreadsheetId, tabGids: data.tabGids }, devNotes: opts.devNotes, config, planEvents: events }),
     opts.ticketFilters,
   );
 
@@ -362,6 +384,7 @@ function writeRoutingReport(tickets) {
     'source_row',
     'fingerprint',
     'ticket_in_plan',
+    'page_load',
     'open_questions',
   ];
 
@@ -377,6 +400,7 @@ function writeRoutingReport(tickets) {
     t.sourceRow || '',
     t.fingerprint || '',
     t.existingTicket || '',
+    t.pageLoad ? 'yes' : '',
     getOpenQuestions(t).length,
   ]);
 

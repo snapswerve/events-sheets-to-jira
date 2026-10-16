@@ -5,7 +5,7 @@ service-account-key.json
 
 # Company-specific data — do NOT commit
 data/*.xlsx
-data/team-notes.json
+data/company.json
 data/*.csv
 output/
 

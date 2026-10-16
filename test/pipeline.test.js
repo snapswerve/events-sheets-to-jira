@@ -12,7 +12,8 @@ import { fileURLToPath } from 'url';
 import { writeSamplePlan } from '../examples/build-sample-plan.js';
 import { readEventingPlan } from '../src/reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets } from '../src/pipeline.js';
-import { getOpenQuestions, sampleValue, formatFieldTable, getTeamNotes } from '../src/dev-notes.js';
+import { getOpenQuestions, sampleValue, formatFieldTable } from '../src/dev-notes.js';
+import { findMisfiledTracks, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
 import { parseTrackTab } from '../src/parser.js';
 import { getRowUrl } from '../src/links.js';
 import { SAMPLE_TABS } from '../examples/build-sample-plan.js';
@@ -25,7 +26,7 @@ const PLAN_URL = 'https://docs.google.com/spreadsheets/d/test-plan-id/edit?usp=s
 before(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sheets-to-jira-'));
   process.env.GOOGLE_SHEETS_MODE = 'false';
-  process.env.TEAM_NOTES_PATH = fileURLToPath(new URL('./fixtures/team-notes.json', import.meta.url));
+  process.env.COMPANY_CONFIG = fileURLToPath(new URL('./fixtures/company.json', import.meta.url));
   process.env.EVENTING_PLAN_URL = PLAN_URL;
   process.env.EVENTING_PLAN_TAB_GIDS = 'Track:111, Identify:222, Page:0, Screen:444';
   process.env.EVENTING_PLAN_PATH = writeSamplePlan(path.join(dir, 'plan.xlsx'));
@@ -157,13 +158,101 @@ test('nested properties become nested objects and arrays', () => {
   assert.match(server, /\.put\("address", ImmutableMap\.<String, Object>builder\(\)\n\s+\.put\("city", "san francisco"\)/);
 });
 
-test('team notes only go on the platforms and templates they target', () => {
+test('notes are inserted by conditions on the event shape', () => {
   const tickets = buildTickets(events);
   for (const t of tickets) {
-    assert.equal(/h3\. Web-only note/.test(t.description), t.platform === 'Web', t.summary);
+    assert.equal(/h3\. Web page-load note/.test(t.description), t.pageLoad && t.platform === 'Web', t.summary);
     assert.equal(/h3\. Page-only note/.test(t.description), t.templateType === 'web-page', t.summary);
+    assert.equal(/h3\. Payments note/.test(t.description), t.eventName === 'Order Completed', t.summary);
   }
-  assert.equal(getTeamNotes({ platform: 'Mobile', templateType: 'mobile-track' }).length, 0);
+});
+
+const RULES_OFF = normalizeConfig({ rules: { pageLoad: { enabled: false } } });
+
+test('page loads are page/screen events plus tracks carrying page_name', () => {
+  const tickets = buildTickets(events);
+  const pageLoads = new Set(tickets.filter((t) => t.pageLoad).map((t) => t.eventName));
+  assert.deepEqual([...pageLoads].sort(), ['Article Viewed', 'Checkout', 'Checkout Started', 'Product Detail']);
+  assert.ok(buildTickets(events, { config: RULES_OFF }).every((t) => !t.pageLoad));
+});
+
+test('page-load tracks get the matching page name, or an open question', () => {
+  const tickets = buildTickets(events);
+
+  const checkout = find(tickets, 'web-track', 'Checkout Started');
+  assert.equal(checkout.expectedPageName, 'Checkout');
+  assert.match(checkout.description, /page_name: 'Checkout', \/\/ string, required/);
+  assert.match(checkout.description, /h3\. Page name\nSet \{\{page_name\}\} to \{\{Checkout\}\}.*Reporting reads them as the same page\./);
+
+  const article = find(tickets, 'web-track', 'Article Viewed');
+  assert.match(getOpenQuestions(article).join('\n'), /No Page or Screen event in the plan matches "Article Viewed"/);
+
+  // The page event lists the tracks that must use its name
+  assert.match(find(tickets, 'web-page', 'Checkout').description, /\{\{Checkout\}\}, must exactly match \{\{page_name\}\} on the page-load track events for this page: Checkout Started\./);
+});
+
+test('track events that read like page views are flagged', () => {
+  assert.deepEqual(findMisfiledTracks(events, loadCompanyConfig()).map((e) => e.eventName), ['Home Viewed']);
+  assert.deepEqual(findMisfiledTracks(events, RULES_OFF), []);
+
+  const home = buildTickets(events).find((t) => t.eventName === 'Home Viewed');
+  assert.match(getOpenQuestions(home).join('\n'), /belongs on the Page\/Screen tab/);
+});
+
+test('page names match by words, preferring the longest', () => {
+  const names = ['Checkout', 'CIA', 'Sub CIA', 'Product Overview', 'Buying Guide'];
+  assert.equal(matchPageName('Checkout Step Viewed', names), 'Checkout');
+  assert.equal(matchPageName('Sub CIA Viewed', names), 'Sub CIA');
+  assert.equal(matchPageName('Overview Viewed', names), 'Product Overview');
+  assert.equal(matchPageName('Buying Guide Viewed', names), 'Buying Guide');
+  assert.equal(matchPageName('Model Viewed', names), '');
+  assert.equal(matchPageName('Checkouts Viewed', names), '');
+});
+
+test('pageNames in the config sets the page name when no page event matches', () => {
+  const config = normalizeConfig({ rules: { pageLoad: { enabled: true, pageNames: { 'Article Viewed': 'Article' } } } });
+  const article = buildTickets(events, { config }).find((t) => t.eventName === 'Article Viewed');
+  assert.equal(article.expectedPageName, 'Article');
+  assert.match(article.description, /page_name: 'Article',/);
+  assert.doesNotMatch(getOpenQuestions(article).join('\n'), /No Page or Screen event/);
+});
+
+test('notPageLoads keeps a track with page_name out of the page-load rule', () => {
+  const config = normalizeConfig({ rules: { pageLoad: { enabled: true, notPageLoads: ['Article Viewed'] } } });
+  const article = buildTickets(events, { config }).find((t) => t.eventName === 'Article Viewed');
+  assert.equal(article.pageLoad, false);
+  assert.doesNotMatch(getOpenQuestions(article).join('\n'), /No Page or Screen event/);
+});
+
+test('a company wrapper replaces the web snippet and the properties it sets', () => {
+  const config = normalizeConfig({
+    wrappers: {
+      web: {
+        name: 'Acme.analytics',
+        providesProperties: ['platform'],
+        snippets: { track: 'const { analytics } = Acme;\n\nanalytics.track({\n  name: {{name}},\n  props: {{props}},\n});' },
+      },
+    },
+  });
+  const tickets = buildTickets(events, { config });
+  const web = find(tickets, 'web-track', 'Checkout Started').description;
+
+  assert.match(web, /analytics\.track\(\{\n  name: 'Checkout Started',\n  props: \{\n    checkout_id: 'chk_8f2k1', \/\/ string, required/);
+  assert.match(web, /\n  \},\n\}\);\n\/\/ Set by Acme\.analytics — don't pass: platform\n\{code\}/);
+  assert.doesNotMatch(web.split('{code:javascript}')[1], /platform: 'web'/, 'platform left out of the call');
+  assert.match(web, /\|\{\{platform\}\}\|string\|platform action took place on\|web, app\|set by Acme\.analytics\|/);
+  assert.match(web, /"platform": "web"/, 'still in the example payload');
+  assert.doesNotMatch(getOpenQuestions(find(tickets, 'web-track', 'Checkout Started')).join('\n'), /\{\{platform\}\}/);
+
+  // Other platforms and call types keep the default SDK snippet
+  assert.match(find(tickets, 'mobile-track', 'Checkout Started').description, /const \{ track \} = useAnalytics\(\);/);
+  assert.match(find(tickets, 'web-page', 'Checkout').description, /analytics\.page\('Checkout', \{/);
+});
+
+test('with rules off, descriptions have no rule sections', () => {
+  for (const t of buildTickets(events, { config: RULES_OFF })) {
+    assert.doesNotMatch(t.description, /h3\. Page name|Web page-load note/, t.summary);
+  }
 });
 
 test('links point at the configured plan, down to the row when the row is known', () => {

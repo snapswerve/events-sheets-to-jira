@@ -10,6 +10,7 @@ import { mapEventsToInstances } from './mapper.js';
 import { renderTicket } from './templates.js';
 import { getRowUrl } from './links.js';
 import { looksLikeJiraKey } from './dev-notes.js';
+import { loadCompanyConfig, normalizeConfig, buildRuleContext, applyRules } from './rules.js';
 
 // Jira Cloud rejects descriptions over 32,767 characters
 export const JIRA_DESCRIPTION_LIMIT = 32767;
@@ -54,12 +55,17 @@ export function isTicketed(event) {
 }
 
 /**
- * Maps events to ticket instances and renders each one.
- * @param {Object} opts - { source: { spreadsheetId, tabGids } from reader.js, devNotes: boolean }
+ * Maps events to ticket instances, applies company rules, and renders each one.
+ * @param {Object} opts
+ *   source     - { spreadsheetId, tabGids } from reader.js, for row links
+ *   devNotes   - false for the lean, spec-only description
+ *   config     - company config (defaults to data/company.json; see rules.js)
+ *   planEvents - every event in the plan, for rules that look across tabs (defaults to `events`)
  */
-export function buildTickets(events, { source = {}, devNotes = true } = {}) {
+export function buildTickets(events, { source = {}, devNotes = true, config = loadCompanyConfig(), planEvents = events } = {}) {
+  const ruleContext = buildRuleContext(planEvents, normalizeConfig(config));
   return mapEventsToInstances(events).map((instance) => {
-    const ticket = { ...instance, sourceUrl: getRowUrl(instance.tabType, instance.sourceRow, source) };
+    const ticket = applyRules({ ...instance, sourceUrl: getRowUrl(instance.tabType, instance.sourceRow, source) }, ruleContext);
     return { ...ticket, ...renderTicket(ticket, { devNotes }) };
   });
 }

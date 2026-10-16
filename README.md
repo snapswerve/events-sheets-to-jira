@@ -103,7 +103,7 @@ Fill in your values:
 This repo is public, so anything that points into company systems stays on your machine:
 
 - **Plan link and tab IDs** go in `.env` (gitignored): `EVENTING_PLAN_URL`, plus `EVENTING_PLAN_TAB_GIDS` if you use the xlsx file
-- **Team notes** go in `data/team-notes.json` (gitignored) — copy [`data/team-notes.example.json`](data/team-notes.example.json) to start
+- **Company rules and notes** go in `data/company.json` (gitignored) — copy [`data/company.example.json`](data/company.example.json) to start. See [Company rules](#company-rules)
 
 If no plan link is set, tickets still render; they just say "eventing plan" without a link, and the CLI warns you.
 
@@ -157,6 +157,7 @@ node src/index.js --priority P1 --live
 | `--platform web,mobile,server` | Only tickets routed to these platforms |
 | `--event <text>` | Only events whose name (or identify trigger) contains the text |
 | `--skip-ticketed` | Leave out events whose Jira Tickets column in the plan already lists a ticket |
+| `--include-flagged` | Ticket track events the page-load rule flags as likely page views (held back by default) |
 | `--limit N` | Only the first N tickets |
 | `--verbose` | Dry run: print every full description and its open questions |
 | `--no-dev-notes` | Leave the Developer Notes section out of descriptions |
@@ -192,7 +193,7 @@ Each description includes a Developer Notes section generated from the plan row,
 | Section | What's in it |
 |---|---|
 | **(!) Open questions** | Gaps found in the spec: properties missing from the dictionary (type was guessed), unset required/optional status, missing trigger, a platform guessed from Generating Source, or a ticket already listed in the plan. Only shown when there's something to resolve |
-| **Team notes** | Standing instructions from your local `data/team-notes.json`, scoped by platform or template (e.g. "call the shared page tracking opt-out on these pages", with a link to its ticket). Edit that file to add or change notes, no code needed |
+| **Rule notes** | Sections from [company rules](#company-rules): the page name to send on page-load events, plus your own notes keyed on the event's shape (e.g. "call the shared page tracking opt-out on page loads", with a link to its ticket) |
 | **Implementation** | A copy-paste call for the platform's SDK: Analytics.js for web, Analytics React Native for mobile, Java for server-side. It has every property, a typed sample value from the dictionary, and a `// type, status` comment |
 | **Implementation checklist** | Platform-specific pitfalls: exact naming, typed values, omitting empty values, duplicate firing, SPA route changes, unload timing, mobile batching, server-side `userId`/`anonymousId` stitching, flushing on shutdown |
 | **How to verify** | Step-by-step QA for the platform (Segment Inspector / debug build / staging), ending in a Protocols check |
@@ -201,6 +202,50 @@ Each description includes a Developer Notes section generated from the plan row,
 The properties list is a table: **property, type, description, example values, status**. Nested properties from the plan (`address.city`, `products.$.sku`, where `$` is an array item) are listed by their full path in the table and expanded into real nested objects/arrays in the snippet and example payload.
 
 Use `--no-dev-notes` if you want the original, spec-only description.
+
+### Company rules
+
+Rules and notes that depend on the company live in `data/company.json` (gitignored), or any file you point `COMPANY_CONFIG` at — so one clone or fork can serve different products. **With no config file, no rules run and no notes are added.**
+
+```json
+{
+  "rules": {
+    "pageLoad": {
+      "enabled": true,
+      "markerProperty": "page_name",
+      "markerReason": "Why the value must match, shown to developers.",
+      "holdMisfiledTracks": true,
+      "pageNames": { "Model Viewed": "Model" },
+      "notPageLoads": ["Model Comparison Added"]
+    }
+  },
+  "wrappers": {
+    "web": {
+      "name": "Acme.analytics",
+      "providesProperties": ["platform"],
+      "snippets": { "track": "const { analytics } = Acme;\n\nanalytics.track({\n  name: {{name}},\n  props: {{props}},\n});" }
+    }
+  },
+  "notes": [
+    {
+      "title": "Shared page tracking helper",
+      "when": { "pageLoad": true, "platforms": ["web"] },
+      "body": "Jira wiki markup…"
+    }
+  ]
+}
+```
+
+**Page-load rule** (`rules.pageLoad`, off unless `enabled: true`):
+- A ticket is a **page load** if it's a page/screen event, or a track event carrying the marker property (`page_name`)
+- Page-load track tickets get the **page name to send**: the Page/Screen event it matches by name (*Checkout Started* → `Checkout`), used in the snippet and payload, with `markerReason` explaining why. When nothing matches, the ticket gets an open question; set the value under `pageNames` to resolve it for good
+- Page/screen tickets list the track events that must send their name
+- `notPageLoads` lists track events that carry the marker but don't fire on a page load
+- **Plan check:** track events whose trigger reads like a page/screen load but have no marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`)
+
+**Wrappers** (`wrappers.web` / `.mobile` / `.server`) describe a company's own tracking helper. `providesProperties` are set by the helper, so snippets leave them out and the properties table says "set by …". `snippets.track` / `.page` / `.screen` / `.identify` replace the default SDK call for that platform, with `{{name}}` (the event or page name) and `{{props}}` (the properties object) filled in. Call types without a snippet keep the default.
+
+**Notes** are added to every ticket whose event matches all keys in `when`: `pageLoad`, `platforms` (web/mobile/server), `tabTypes` (track/identify/page/screen), `templateTypes` (e.g. `web-page`), `hasProperty`, `productSections`, `teams`. A note with no `when` goes on every ticket.
 
 ---
 
@@ -220,10 +265,11 @@ src/
 ├── links.js        # Links back to the CR plan, down to the event's row
 ├── jira.js         # Jira REST API, Cloud and Data Center (create, find existing, retries)
 ├── jira-fields.js  # Priority map, labels, fingerprints — shared by jira.js and exporter.js
+├── rules.js        # Company rules (page-load) and conditional notes, from data/company.json
 ├── exporter.js     # Exports to xlsx/csv matching Jira import format
 └── sheets.js       # Google Sheets API helpers
 data/
-├── team-notes.example.json  # Format for data/team-notes.json (local, gitignored)
+├── company.example.json   # Format for data/company.json — company rules and notes (local, gitignored)
 └── template-overrides.json
 examples/
 └── build-sample-plan.js   # Fictional plan in the CR layout, for trying the tool and for tests
@@ -239,7 +285,7 @@ test/
 This tool is built for a specific workbook format but is designed to be forked and adapted:
 
 - **Different column headers?** Edit `TAB_SPECS` in `parser.js` — each field lists the header names it accepts
-- **Standing notes for developers?** Add them to `data/team-notes.json`
+- **Standing notes or rules for a company?** Put them in `data/company.json` (or a file named by `COMPANY_CONFIG`)
 - **Different Jira templates?** Edit `templates.js` — each function returns `{ summary, description }`
 - **Different developer notes?** Edit `dev-notes.js` — e.g. swap the SDK snippets if your mobile app is native iOS/Android rather than React Native
 - **Different priority mapping?** Edit the `PRIORITY_MAP` in `jira-fields.js`

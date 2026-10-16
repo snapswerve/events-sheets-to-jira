@@ -34,7 +34,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -91,7 +91,7 @@ h3. "${ticket.eventName}" page event
 *Fires when:* ${ticket.whenFired || 'Not specified'}
 
 *Properties:*
-${formatFieldTable(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -149,7 +149,7 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatFieldTable(traits, 'Trait')}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
 *Example payload (as received by Segment):*
 {code:json}
@@ -203,7 +203,7 @@ h3. ${ticket.eventName}
  * For ${ticket.idState || 'identified'} users
 
 *Properties:*
-${formatFieldTable(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -252,7 +252,7 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatFieldTable(traits, 'Trait')}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
 *Example payload (as received by Segment):*
 {code:json}
@@ -297,7 +297,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -349,7 +349,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -400,7 +400,7 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatFieldTable(traits, 'Trait')}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
 *Example payload (as received by Segment):*
 {code:json}
