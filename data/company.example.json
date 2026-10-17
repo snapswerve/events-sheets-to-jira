@@ -6,28 +6,53 @@
       "markerProperty": "page_name",
       "markerReason": "This lets reporting treat this event and the page view as the same page.",
       "holdMisfiledTracks": true,
-      "pageNames": { "Model Viewed": "Model" },
-      "notPageLoads": ["Model Comparison Added"]
+      "pageNames": {
+        "Model Viewed": "Model"
+      },
+      "notPageLoads": [
+        "Model Comparison Added"
+      ],
+      "pageProperties": [
+        "page_name",
+        "old_page_name"
+      ]
     }
   },
   "wrappers": {
     "web": {
       "name": "Acme.analytics",
-      "providesProperties": ["platform"],
+      "providesProperties": [
+        "platform"
+      ],
       "snippets": {
-        "track": "const { analytics } = Acme;\n\nanalytics.track({\n  name: {{name}},\n  props: {{props}},\n});"
-      }
+        "track": "const { analytics } = Acme;\n\nanalytics.track({\n  name: {{name}},\n  props: {{props}},\n});",
+        "page": "const { analytics } = Acme;\n\nanalytics.page({\n  name: {{name}},\n  props: {{props}},\n});",
+        "identify": "const { analytics } = Acme;\n\nanalytics.identify({{props}});"
+      },
+      "setsUserId": true
     }
   },
   "notes": [
     {
       "title": "Example: shared page tracking helper",
-      "when": { "pageLoad": true, "platforms": ["web"] },
+      "when": {
+        "pageLoad": true,
+        "platforms": [
+          "web"
+        ]
+      },
       "body": "Describe the standing instruction here, e.g. which shared helper to call on these page loads.\n\nReference: [ABC-123|https://jira.example.com/browse/ABC-123]"
     },
     {
       "title": "Example: team convention",
-      "when": { "teams": ["Payments"], "tabTypes": ["track"] },
+      "when": {
+        "teams": [
+          "Payments"
+        ],
+        "tabTypes": [
+          "track"
+        ]
+      },
       "body": "Notes can key on any part of the event's shape: platforms, tabTypes, templateTypes, hasProperty, productSections, teams, pageLoad."
     }
   ]

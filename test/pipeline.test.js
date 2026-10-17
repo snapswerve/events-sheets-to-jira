@@ -96,6 +96,7 @@ test('sample values follow the dictionary type', () => {
   assert.equal(sampleValue({ name: 'internal_ref', type: 'string (internal)', exampleValues: '' }), '<internal_ref>');
   assert.equal(sampleValue({ name: 'payment_method', type: 'enum', exampleValues: '"credit card", "paypal"' }), 'credit card');
   assert.equal(sampleValue({ name: 'start_date', type: 'date', exampleValues: 'yyyy-mm-dd' }), '2026-02-24');
+  assert.equal(sampleValue({ name: 'purchased_at', type: 'date', exampleValues: 'yyyy-mm-ddT00:00:00.000Z' }), '2026-02-24T03:25:53.802Z');
 });
 
 test('table cells escape characters that would break the Jira table', () => {
@@ -247,6 +248,27 @@ test('a company wrapper replaces the web snippet and the properties it sets', ()
   // Other platforms and call types keep the default SDK snippet
   assert.match(find(tickets, 'mobile-track', 'Checkout Started').description, /const \{ track \} = useAnalytics\(\);/);
   assert.match(find(tickets, 'web-page', 'Checkout').description, /analytics\.page\('Checkout', \{/);
+});
+
+test('page_name is exempt from the lowercase rule where it is sent', () => {
+  const tickets = buildTickets(events);
+  assert.match(find(tickets, 'web-track', 'Checkout Started').description, /except for `page_name` property \(must match the page name exactly\)/);
+  assert.doesNotMatch(find(tickets, 'web-track', 'Products Searched').description, /except for `page_name`/);
+});
+
+test('a non-page-load track that still carries page properties is asked to drop them', () => {
+  const config = normalizeConfig({ rules: { pageLoad: { enabled: true, notPageLoads: ['Article Viewed'], pageProperties: ['page_name', 'content_id'] } } });
+  const article = buildTickets(events, { config }).find((t) => t.eventName === 'Article Viewed');
+  assert.match(getOpenQuestions(article).join('\n'), /page properties shouldn't be sent: \{\{page_name\}\}, \{\{content_id\}\}/);
+});
+
+test('a wrapper that identifies the user drops the user ID instructions', () => {
+  const config = normalizeConfig({ wrappers: { web: { name: 'Acme.analytics', setsUserId: true, snippets: { identify: 'analytics.identify({{props}});' } } } });
+  const tickets = buildTickets(events, { config });
+  const identify = find(tickets, 'web-identify', 'Signed Up').description;
+  assert.match(identify, /analytics\.identify\(\{\n  email: 'example@example\.com',/);
+  assert.match(identify, /Don't pass a user ID — Acme\.analytics identifies the user itself/);
+  assert.doesNotMatch(find(tickets, 'web-track', 'Checkout Started').description, /make sure \{\{analytics\.identify\(\)\}\} has already run/);
 });
 
 test('with rules off, descriptions have no rule sections', () => {

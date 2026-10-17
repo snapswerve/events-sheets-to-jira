@@ -11,14 +11,16 @@
  *   - Page-load tracks get the marker's expected value: the name of the Page/Screen event they
  *     belong to, so downstream reporting reads the track and the page view as the same page.
  *     `pageNames` ({ "Model Viewed": "Model" }) sets it for pages with no Page/Screen event;
- *     `notPageLoads` lists tracks that carry the marker but don't fire on a page load
+ *     `notPageLoads` lists tracks that carry the marker but don't fire on a page load; if they still
+ *     carry any `pageProperties` (page_name by default), the ticket asks for them to be removed
  *   - Track events whose trigger reads like a page/screen load but have no marker are flagged as
  *     likely misfiled (they belong on the Page/Screen tab) and held back from ticketing
  *
  * Wrappers (wrappers.web / .mobile / .server): a company's own tracking helper (e.g. a global analytics abstraction).
  *   providesProperties are set by the wrapper, so snippets leave them out and the table says so;
  *   snippets.track / .page / .screen / .identify replace the default SDK call, with {{name}}
- *   (the event/page name) and {{props}} (the properties object) filled in.
+ *   (the event/page name) and {{props}} (the properties object) filled in. setsUserId: true means
+ *   the wrapper identifies the user itself, so tickets don't ask developers to pass a user ID.
  *
  * Notes: { title, body, when } — `when` keys must all match:
  *   pageLoad (true/false), platforms (web/mobile/server), tabTypes (track/identify/page/screen),
@@ -37,6 +39,7 @@ const PAGE_LOAD_DEFAULTS = {
   holdMisfiledTracks: true,
   pageNames: {},
   notPageLoads: [],
+  pageProperties: [],
 };
 
 let configCache;
@@ -135,6 +138,7 @@ export function applyRules(ticket, ctx) {
 
   if (rule.enabled) {
     const marker = rule.markerProperty;
+    out.markerProperty = marker;
     out.pageLoad = ticket.tabType === 'page' || ticket.tabType === 'screen' || (ticket.tabType === 'track' && isPageLoadTrack(ticket, rule));
 
     if (ticket.tabType === 'track' && out.pageLoad) {
@@ -163,6 +167,13 @@ export function applyRules(ticket, ctx) {
       }
     }
 
+    if (ticket.tabType === 'track' && isExcluded(ticket, rule)) {
+      const pageProps = [...new Set([marker, ...rule.pageProperties].map((p) => p.toLowerCase()))].filter((p) => hasProperty(ticket, p));
+      if (pageProps.length > 0) {
+        out.ruleQuestions.push(`This event doesn't fire on a page load, so page properties shouldn't be sent: ${pageProps.map((p) => `{{${p}}}`).join(', ')} — remove them from the plan.`);
+      }
+    }
+
     if (ctx.misfiledRows.has(rowKey(ticket))) {
       out.ruleQuestions.push(`The trigger reads like a page/screen load, but there's no {{${marker}}}. If this is a page view, it belongs on the Page/Screen tab; if it's a track event that fires on page load, add {{${marker}}}.`);
     }
@@ -175,6 +186,7 @@ export function applyRules(ticket, ctx) {
       provides: (wrapper.providesProperties || []).map((p) => p.toLowerCase()),
       snippet: wrapper.snippets?.[ticket.templateType.split('-')[1]],
       lang: wrapper.lang || 'javascript',
+      setsUserId: Boolean(wrapper.setsUserId),
     };
   }
 
@@ -183,8 +195,11 @@ export function applyRules(ticket, ctx) {
 }
 
 function isPageLoadTrack(event, rule) {
-  const excluded = rule.notPageLoads.map((name) => name.toLowerCase());
-  return hasProperty(event, rule.markerProperty) && !excluded.includes(String(event.eventName || '').toLowerCase());
+  return hasProperty(event, rule.markerProperty) && !isExcluded(event, rule);
+}
+
+function isExcluded(event, rule) {
+  return rule.notPageLoads.map((name) => name.toLowerCase()).includes(String(event.eventName || '').toLowerCase());
 }
 
 /**

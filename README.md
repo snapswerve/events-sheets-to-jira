@@ -240,10 +240,11 @@ Rules and notes that depend on the company live in `data/company.json` (gitignor
 - A ticket is a **page load** if it's a page/screen event, or a track event carrying the marker property (`page_name`)
 - Page-load track tickets get the **page name to send**: the Page/Screen event it matches by name (*Checkout Started* → `Checkout`), used in the snippet and payload, with `markerReason` explaining why. When nothing matches, the ticket gets an open question; set the value under `pageNames` to resolve it for good
 - Page/screen tickets list the track events that must send their name
-- `notPageLoads` lists track events that carry the marker but don't fire on a page load
+- `notPageLoads` lists track events that carry the marker but don't fire on a page load — if they still carry any of `pageProperties` (e.g. `page_name`, `old_page_name`), the ticket asks for those to be removed from the plan
+- Tickets that send the marker add it to the acceptance criteria's lowercase exceptions, since it must match the page name exactly
 - **Plan check:** track events whose trigger reads like a page/screen load but have no marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`)
 
-**Wrappers** (`wrappers.web` / `.mobile` / `.server`) describe a company's own tracking helper. `providesProperties` are set by the helper, so snippets leave them out and the properties table says "set by …". `snippets.track` / `.page` / `.screen` / `.identify` replace the default SDK call for that platform, with `{{name}}` (the event or page name) and `{{props}}` (the properties object) filled in. Call types without a snippet keep the default.
+**Wrappers** (`wrappers.web` / `.mobile` / `.server`) describe a company's own tracking helper. `providesProperties` are set by the helper, so snippets leave them out and the properties table says "set by …". `snippets.track` / `.page` / `.screen` / `.identify` replace the default SDK call for that platform, with `{{name}}` (the event or page name) and `{{props}}` (the properties object) filled in. Call types without a snippet keep the default. `setsUserId: true` means the helper identifies the user itself, so tickets don't ask developers to pass a user ID.
 
 **Notes** are added to every ticket whose event matches all keys in `when`: `pageLoad`, `platforms` (web/mobile/server), `tabTypes` (track/identify/page/screen), `templateTypes` (e.g. `web-page`), `hasProperty`, `productSections`, `teams`. A note with no `when` goes on every ticket.
 

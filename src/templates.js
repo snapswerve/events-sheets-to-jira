@@ -11,6 +11,15 @@
 import { developerNotes, formatFieldTable, samplePayload } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
 
+// page_name must equal the page event's name exactly, so it keeps its case like event names do
+function markerException(ticket) {
+  const marker = ticket.markerProperty;
+  const fields = ticket.properties || [];
+  return marker && fields.some((f) => f.name.toLowerCase() === marker.toLowerCase())
+    ? `\n ** except for \`${marker}\` property (must match the page name exactly)`
+    : '';
+}
+
 function planLink() {
   const url = getPlanUrl();
   return url ? `[eventing plan|${url}]` : 'eventing plan';
@@ -69,7 +78,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
@@ -126,7 +135,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
@@ -229,7 +238,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
@@ -326,7 +335,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
@@ -378,7 +387,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)`,
+ ** except for event name (page, track)${markerException(ticket)}`,
   };
 }
 

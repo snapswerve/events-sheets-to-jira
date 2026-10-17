@@ -108,7 +108,7 @@ export function sampleValue(field) {
       return json && typeof json === 'object' && !Array.isArray(json) ? json : {};
     case 'datetime':
       // Format placeholders like "yyyy-mm-dd" aren't values — swap in a real date of that shape
-      if (/\d/.test(first)) return first;
+      if (/\d/.test(first) && !/y{4}/i.test(first)) return first;
       return /^y{4}-m{2}-d{2}$/i.test(first) ? SAMPLE_DATE : SAMPLE_TIMESTAMP;
     default:
       return first || `<${field.name}>`;
@@ -315,7 +315,10 @@ function implementationChecklist(ticket) {
   const noun = call === 'identify' ? 'trait' : 'property';
   const items = [];
 
-  if (call === 'identify') {
+  if (call === 'identify' && ticket.wrapper?.setsUserId) {
+    items.push(`Don't pass a user ID — ${ticket.wrapper.name} identifies the user itself`);
+    items.push('Call identify when these traits are set or change (signup, login, profile update) — not on every page load or app open');
+  } else if (call === 'identify') {
     items.push('Set {{userId}} to the canonical internal user ID — never an email address or other PII');
     items.push('Call identify when these traits are set or change (signup, login, profile update) — not on every page load or app open');
   } else {
@@ -340,7 +343,7 @@ function implementationChecklist(ticket) {
     if (call === 'track') {
       items.push('If the action navigates away (link click, form submit), make sure the event is sent before unload — use {{analytics.trackLink()}} / {{analytics.trackForm()}} or await the call');
     }
-    if (call !== 'identify') {
+    if (call !== 'identify' && !ticket.wrapper?.setsUserId) {
       items.push('For logged-in users, make sure {{analytics.identify()}} has already run so this call carries the {{userId}}');
     }
   } else if (family === 'mobile') {
