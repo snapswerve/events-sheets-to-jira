@@ -11,12 +11,14 @@
 import { developerNotes, formatFieldTable, samplePayload } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
 
-// page_name must equal the page event's name exactly, so it keeps its case like event names do
+// The ticket's page-load marker (page_name on web, e.g. screen_name on app tickets) must equal the
+// page/screen event's name exactly, so it keeps its case like event names do
 function markerException(ticket) {
   const marker = ticket.markerProperty;
   const fields = ticket.properties || [];
+  const view = ticket.platform === 'Mobile' ? 'screen' : 'page';
   return marker && fields.some((f) => f.name.toLowerCase() === marker.toLowerCase())
-    ? `\n ** except for \`${marker}\` property (must match the page name exactly)`
+    ? `\n ** except for \`${marker}\` property (must match the ${view} name exactly)`
     : '';
 }
 

@@ -13,7 +13,7 @@ import { writeSamplePlan } from '../examples/build-sample-plan.js';
 import { readEventingPlan } from '../src/reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets } from '../src/pipeline.js';
 import { getOpenQuestions, sampleValue, formatFieldTable } from '../src/dev-notes.js';
-import { findMisfiledTracks, findAppScreenLoadTracks, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
+import { findMisfiledTracks, findAppScreenLoadTracks, misfiledMarkers, platformRule, describeConfig, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
 import { parseTrackTab } from '../src/parser.js';
 import { getRowUrl } from '../src/links.js';
 import { SAMPLE_TABS } from '../examples/build-sample-plan.js';
@@ -349,4 +349,163 @@ test('descriptions without a configured plan link still render', () => {
   } finally {
     process.env.EVENTING_PLAN_URL = saved;
   }
+});
+
+// ─── Per-platform page-load markers (pageLoad.platformMarkers) ───
+
+const MOBILE_MARKER = {
+  markerProperty: 'screen_name',
+  markerReason: 'Reporting reads them as the same screen.',
+  pageProperties: ['screen_name', 'old_screen_name'],
+};
+const withMarkers = (pageLoad = {}) =>
+  normalizeConfig({ rules: { pageLoad: { enabled: true, markerReason: 'Reporting reads them as the same page.', platformMarkers: { mobile: MOBILE_MARKER }, ...pageLoad } } });
+
+// Track events shaped like the sample plan's, with the properties named
+function markerTrack(eventName, sourceRow, generatingSource, propNames, whenFired = 'Fires when the product detail screen loads') {
+  const checkout = events.find((e) => e.eventName === 'Checkout Started');
+  const like = checkout.properties.find((p) => p.name === 'page_name');
+  return {
+    ...checkout,
+    eventName,
+    sourceRow,
+    generatingSource,
+    templates: '',
+    whenFired,
+    properties: propNames.map((name) => ({ ...like, name })),
+  };
+}
+const sampleView = (tabType, eventName) => events.find((e) => e.tabType === tabType && e.eventName === eventName);
+
+test('app screen-load tracks carry the mobile marker and get the Screen name', () => {
+  const track = markerTrack('Product Detail Viewed', 950, 'Mobile', ['screen_name', 'old_screen_name']);
+  const plan = [sampleView('screen', 'Product Detail'), sampleView('page', 'Checkout'), track];
+  const config = withMarkers();
+  const tickets = buildTickets(plan, { config, planEvents: plan });
+
+  const mobile = find(tickets, 'mobile-track', 'Product Detail Viewed');
+  assert.equal(mobile.pageLoad, true);
+  assert.equal(mobile.markerProperty, 'screen_name');
+  assert.equal(mobile.expectedPageName, 'Product Detail');
+  assert.match(mobile.description, /screen_name: 'Product Detail',/);
+  assert.match(mobile.description, /h3\. Page name\nSet \{\{screen_name\}\} to \{\{Product Detail\}\}.*Reporting reads them as the same screen\./);
+  assert.match(mobile.description, /except for `screen_name` property \(must match the screen name exactly\)/);
+  assert.deepEqual(getOpenQuestions(mobile).filter((q) => /screen_name|page_name/.test(q)), []);
+
+  // The Screen ticket names the mobile marker; the Page ticket has no tracks carrying page_name
+  assert.match(find(tickets, 'mobile-screen', 'Product Detail').description, /\{\{Product Detail\}\}, must exactly match \{\{screen_name\}\} on the page-load track events for this screen: Product Detail Viewed\. Reporting reads them as the same screen\./);
+  assert.doesNotMatch(find(tickets, 'web-page', 'Checkout').description, /must exactly match/);
+
+  // A web track carrying only screen_name isn't a web page load
+  const webOnly = markerTrack('Product Detail Viewed', 951, 'Web', ['screen_name'], 'user taps a product');
+  assert.equal(buildTickets([webOnly], { config, planEvents: plan })[0].pageLoad, false);
+});
+
+test('with a mobile marker, app tracks that read like a screen load without it are held back', () => {
+  const config = withMarkers();
+  assert.deepEqual(config.rules.pageLoad.holdMisfiledPlatforms, ['web', 'mobile']);
+
+  const appNoMarker = markerTrack('Fx App Viewed', 960, 'Mobile', ['product_id']);
+  const appPageName = markerTrack('Fx App Page Name Viewed', 961, 'Mobile', ['page_name']);
+  const appMarked = markerTrack('Fx App Marked Viewed', 962, 'Mobile', ['screen_name']);
+  const plan = [appNoMarker, appPageName, appMarked];
+  assert.deepEqual(findMisfiledTracks(plan, config).map((e) => e.eventName), ['Fx App Viewed', 'Fx App Page Name Viewed']);
+  assert.deepEqual(findAppScreenLoadTracks(plan, config), []);
+
+  const [ticket] = buildTickets([appPageName], { config, planEvents: plan });
+  const questions = getOpenQuestions(ticket).join('\n');
+  assert.match(questions, /reads like a page\/screen load, but there's no \{\{screen_name\}\}\. If this is a page view, it belongs on the Page\/Screen tab; if it's a track event that fires on page load, add \{\{screen_name\}\}\./);
+  assert.doesNotMatch(questions, /Decide how app screen loads/);
+});
+
+test('mixed web + mobile events need each platform\'s marker', () => {
+  const config = withMarkers();
+  const pageOnly = markerTrack('Fx Page Only Viewed', 970, 'Web; Mobile', ['page_name'], 'On product page/screen load');
+  pageOnly.templates = 'web\nmobile app';
+  const screenOnly = { ...markerTrack('Fx Screen Only Viewed', 971, 'Web; Mobile', ['screen_name'], 'On product page/screen load'), templates: 'web\nmobile app' };
+  const both = { ...markerTrack('Fx Both Viewed', 972, 'Web; Mobile', ['page_name', 'screen_name'], 'On product page/screen load'), templates: 'web\nmobile app' };
+  const neither = { ...markerTrack('Fx Neither Viewed', 973, 'Web; Mobile', ['product_id'], 'On product page/screen load'), templates: 'web\nmobile app' };
+  const plan = [sampleView('page', 'Checkout'), sampleView('screen', 'Product Detail'), pageOnly, screenOnly, both, neither];
+
+  assert.deepEqual(findMisfiledTracks(plan, config).map((e) => e.eventName), ['Fx Page Only Viewed', 'Fx Screen Only Viewed', 'Fx Neither Viewed']);
+  const tickets = buildTickets(plan, { config, planEvents: plan });
+  const q = (type, name) => getOpenQuestions(find(tickets, type, name)).join('\n');
+
+  // Only the mobile marker is missing: the web ticket (its marker is there) names it with its platform
+  assert.match(q('web-track', 'Fx Page Only Viewed'), /there's no \{\{screen_name\}\} on mobile\. .*add \{\{screen_name\}\} on mobile\./);
+  assert.match(q('mobile-track', 'Fx Page Only Viewed'), /there's no \{\{screen_name\}\}\. .*add \{\{screen_name\}\}\./);
+  assert.match(q('web-track', 'Fx Screen Only Viewed'), /there's no \{\{page_name\}\}\. .*add \{\{page_name\}\}\./);
+  assert.match(q('web-track', 'Fx Neither Viewed'), /there's no \{\{page_name\}\} on web or \{\{screen_name\}\} on mobile\. .*add \{\{page_name\}\} on web and \{\{screen_name\}\} on mobile\./);
+  assert.doesNotMatch(q('web-track', 'Fx Both Viewed'), /there's no/);
+
+  // Each ticket is a page load only with its own platform's marker
+  const pageLoad = (type, name) => find(tickets, type, name).pageLoad;
+  assert.deepEqual([pageLoad('web-track', 'Fx Page Only Viewed'), pageLoad('mobile-track', 'Fx Page Only Viewed')], [true, false]);
+  assert.deepEqual([pageLoad('web-track', 'Fx Screen Only Viewed'), pageLoad('mobile-track', 'Fx Screen Only Viewed')], [false, true]);
+  assert.deepEqual([pageLoad('web-track', 'Fx Both Viewed'), pageLoad('mobile-track', 'Fx Both Viewed')], [true, true]);
+  // ...and is asked for its own marker's value when no Page/Screen event matches
+  assert.match(q('web-track', 'Fx Both Viewed'), /confirm the exact \{\{page_name\}\} value/);
+  assert.match(q('mobile-track', 'Fx Both Viewed'), /confirm the exact \{\{screen_name\}\} value .*Reporting reads them as the same screen\./);
+});
+
+test('notPageLoads asks to drop each platform\'s page properties', () => {
+  const config = withMarkers({ notPageLoads: ['Fx Added'], pageProperties: ['page_name', 'old_page_name'] });
+  const added = { ...markerTrack('Fx Added', 980, 'Web; Mobile', ['page_name', 'old_page_name', 'screen_name', 'old_screen_name'], 'user adds a product'), templates: 'web\nmobile app' };
+  const tickets = buildTickets([added], { config, planEvents: [added] });
+  const q = (type) => getOpenQuestions(find(tickets, type, 'Fx Added')).join('\n');
+  assert.match(q('web-track'), /page properties shouldn't be sent: \{\{page_name\}\}, \{\{old_page_name\}\} —/);
+  assert.match(q('mobile-track'), /page properties shouldn't be sent: \{\{screen_name\}\}, \{\{old_screen_name\}\} —/);
+  assert.ok(tickets.every((t) => !t.pageLoad));
+});
+
+test('hold platforms default to web plus every platform with a marker; an explicit list wins', () => {
+  const hold = (pageLoad) => normalizeConfig({ rules: { pageLoad: { enabled: true, ...pageLoad } } }).rules.pageLoad.holdMisfiledPlatforms;
+  assert.deepEqual(hold({}), ['web']);
+  assert.deepEqual(hold({ platformMarkers: {} }), ['web']);
+  assert.deepEqual(hold({ platformMarkers: { Mobile: MOBILE_MARKER } }), ['web', 'mobile']);
+  assert.deepEqual(hold({ platformMarkers: { web: { markerProperty: 'page_name' }, server: { markerProperty: 'page_name' } } }), ['web', 'server']);
+  assert.deepEqual(hold({ platformMarkers: { mobile: MOBILE_MARKER }, holdMisfiledPlatforms: ['web'] }), ['web']);
+  assert.deepEqual(hold({ platformMarkers: { mobile: MOBILE_MARKER }, holdMisfiledPlatforms: [] }), []);
+
+  // Explicitly web only: app screen loads without screen_name are asked about, naming screen_name
+  const config = withMarkers({ holdMisfiledPlatforms: ['web'] });
+  const app = markerTrack('Fx App Viewed', 990, 'Mobile', ['page_name']);
+  assert.deepEqual(findMisfiledTracks([app], config), []);
+  assert.deepEqual(findAppScreenLoadTracks([app], config).map((e) => e.eventName), ['Fx App Viewed']);
+  const questions = getOpenQuestions(buildTickets([app], { config, planEvents: [app] })[0]).join('\n');
+  assert.match(questions, /reads like a screen load, but there's no \{\{screen_name\}\}/);
+  // ...and an app track carrying screen_name isn't
+  assert.deepEqual(findAppScreenLoadTracks([markerTrack('Fx Marked Viewed', 991, 'Mobile', ['screen_name'])], config), []);
+});
+
+test('without platformMarkers (or with entries matching the top level) tickets are unchanged', () => {
+  const base = loadCompanyConfig();
+  const raw = JSON.parse(fs.readFileSync(process.env.COMPANY_CONFIG, 'utf-8'));
+  const same = (pageLoad) => normalizeConfig({ ...raw, rules: { pageLoad: { ...raw.rules.pageLoad, ...pageLoad } } });
+  const render = (config) => buildTickets(events, { config }).map((t) => [t.summary, t.pageLoad, t.description, getOpenQuestions(t)]);
+  const expected = render(base);
+  assert.deepEqual(render(same({ platformMarkers: {} })), expected);
+  assert.deepEqual(render(same({ platformMarkers: { web: { markerProperty: 'page_name' }, mobile: {} } })), expected);
+  assert.deepEqual(findMisfiledTracks(events, same({ platformMarkers: { mobile: {} } })).map((e) => e.eventName), ['Home Viewed']);
+  assert.deepEqual(platformRule(base.rules.pageLoad, 'Mobile'), { markerProperty: 'page_name', pageProperties: [], markerReason: 'Reporting reads them as the same page.' });
+});
+
+test('the CLI header names each platform\'s marker', () => {
+  assert.equal(describeConfig(normalizeConfig({ rules: { pageLoad: { enabled: true } } })), 'page-load rule on (marker: page_name)');
+  assert.equal(describeConfig(withMarkers()), 'page-load rule on (markers: web page_name, mobile screen_name)');
+  const example = JSON.parse(fs.readFileSync(new URL('../data/company.example.json', import.meta.url), 'utf-8'));
+  assert.match(describeConfig(normalizeConfig(example)), /^page-load rule on \(markers: web page_name, mobile screen_name\)/);
+});
+
+test('the sample plan under the example config holds Home Viewed back for both markers', () => {
+  const example = normalizeConfig(JSON.parse(fs.readFileSync(new URL('../data/company.example.json', import.meta.url), 'utf-8')));
+  assert.deepEqual(findMisfiledTracks(events, example).map((e) => e.eventName), ['Home Viewed']);
+  assert.deepEqual(misfiledMarkers(events.find((e) => e.eventName === 'Home Viewed'), example), [
+    { platform: 'web', marker: 'page_name' },
+    { platform: 'mobile', marker: 'screen_name' },
+  ]);
+  // Checkout Started sends page_name on web; its app ticket isn't a page load (no screen_name)
+  const tickets = buildTickets(events, { config: example });
+  assert.equal(find(tickets, 'web-track', 'Checkout Started').pageLoad, true);
+  assert.equal(find(tickets, 'mobile-track', 'Checkout Started').pageLoad, false);
 });

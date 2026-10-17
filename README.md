@@ -215,9 +215,16 @@ Rules and notes that depend on the company live in `data/company.json` (gitignor
       "markerProperty": "page_name",
       "markerReason": "Why the value must match, shown to developers.",
       "holdMisfiledTracks": true,
-      "holdMisfiledPlatforms": ["web"],
       "pageNames": { "Model Viewed": "Model" },
-      "notPageLoads": ["Model Comparison Added"]
+      "notPageLoads": ["Model Comparison Added"],
+      "pageProperties": ["page_name", "old_page_name"],
+      "platformMarkers": {
+        "mobile": {
+          "markerProperty": "screen_name",
+          "markerReason": "Why the value must match the screen's name.",
+          "pageProperties": ["screen_name", "old_screen_name"]
+        }
+      }
     }
   },
   "wrappers": {
@@ -238,12 +245,13 @@ Rules and notes that depend on the company live in `data/company.json` (gitignor
 ```
 
 **Page-load rule** (`rules.pageLoad`, off unless `enabled: true`):
-- A ticket is a **page load** if it's a page/screen event, or a track event carrying the marker property (`page_name`)
-- Page-load track tickets get the **page name to send**: the Page/Screen event it matches by name (*Checkout Started* → `Checkout`), used in the snippet and payload, with `markerReason` explaining why. When nothing matches, the ticket gets an open question; set the value under `pageNames` to resolve it for good
-- Page/screen tickets list the track events that must send their name
-- `notPageLoads` lists track events that carry the marker but don't fire on a page load — if they still carry any of `pageProperties` (e.g. `page_name`, `old_page_name`), the ticket asks for those to be removed from the plan
-- Tickets that send the marker add it to the acceptance criteria's lowercase exceptions, since it must match the page name exactly
-- **Plan check:** track events whose trigger reads like a page/screen load but have no marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`). Only events that route to a platform in `holdMisfiledPlatforms` are held back (default `["web"]`, using the same Templates / Generating Source routing as the tickets). App-only ones are ticketed with an open question instead, `appScreenLoadQuestion` (override the text; `{{marker}}` is replaced), since how app screen loads should show in reporting can differ from web page loads. Server-only ones are skipped. Add `"mobile"` to `holdMisfiledPlatforms` once app screen loads must carry the marker too
+- **Per-platform markers** (`platformMarkers`, optional): an entry for `web`, `mobile` or `server` gives that platform's tickets their own `markerProperty`, `pageProperties` and `markerReason` — e.g. web page loads carry `page_name` while app screen loads carry `screen_name`. A platform without an entry (or an entry missing one of the keys) uses the top-level value, so with no `platformMarkers` every platform uses `markerProperty`. Everything below uses the ticket's own platform's marker
+- A ticket is a **page load** if it's a page/screen event, or a track event carrying its platform's marker (`page_name` by default) and not listed in `notPageLoads`
+- Page-load track tickets get the **page name to send**: the Page/Screen event it matches by name (*Checkout Started* → `Checkout`; web tickets prefer Page names, app tickets Screen names), used in the snippet and payload, with `markerReason` explaining why. When nothing matches, the ticket gets an open question; set the value under `pageNames` to resolve it for good
+- Page tickets list the track events that must send their name in the web marker; screen tickets, in the mobile marker
+- `notPageLoads` lists track events that carry the marker but don't fire on a page load — if they still carry the ticket's marker or any of its platform's `pageProperties` (e.g. `page_name`, `old_page_name`; `screen_name`, `old_screen_name` on app tickets), the ticket asks for those to be removed from the plan
+- Tickets that send their marker add it to the acceptance criteria's lowercase exceptions, since it must match the page or screen name exactly
+- **Plan check:** track events whose trigger reads like a page/screen load but lack the marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`). An event is held back when, for a platform it routes to that's in `holdMisfiledPlatforms` (same Templates / Generating Source routing as the tickets), it doesn't carry that platform's marker; the CLI and the open question name the missing marker(s). Not set, `holdMisfiledPlatforms` is `["web"]` plus every platform with a `platformMarkers` entry (so a `mobile` entry holds back app screen loads without `screen_name`); set it to override. App ones that aren't held back (mobile isn't a hold platform) and lack the mobile marker are ticketed with an open question instead, `appScreenLoadQuestion` (override the text; `{{marker}}` is replaced with the mobile marker), since how app screen loads should show in reporting can differ from web page loads. Server-only ones are skipped
 
 **Wrappers** (`wrappers.web` / `.mobile` / `.server`) describe a company's own tracking helper. `providesProperties` are set by the helper, so snippets leave them out and the properties table says "set by …". `snippets.track` / `.page` / `.screen` / `.identify` replace the default SDK call for that platform, with `{{name}}` (the event or page name) and `{{props}}` (the properties object) filled in. Call types without a snippet keep the default. `setsUserId: true` means the helper identifies the user itself, so tickets don't ask developers to pass a user ID.
 
