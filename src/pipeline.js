@@ -71,6 +71,18 @@ export function buildTickets(events, { source = {}, devNotes = true, config = lo
 }
 
 /**
+ * Splits off the tickets the page-load rule holds back (ticket.heldBack, set by rules.applyRules):
+ * a ticket whose platform is a hold platform and lacks that platform's marker on a load. The event's
+ * other tickets stay. Nothing is held when holdMisfiledTracks is off or includeFlagged is set.
+ * @returns {{ tickets: Object[], held: Object[] }}
+ */
+export function holdBackTickets(tickets, { config = loadCompanyConfig(), includeFlagged = false } = {}) {
+  const rule = normalizeConfig(config).rules.pageLoad;
+  if (!rule.enabled || !rule.holdMisfiledTracks || includeFlagged) return { tickets, held: [] };
+  return { tickets: tickets.filter((t) => !t.heldBack), held: tickets.filter((t) => t.heldBack) };
+}
+
+/**
  * Ticket-level filters (platform is only known after routing).
  * @param {Object} filters - { platforms: string[], limit: number }
  */

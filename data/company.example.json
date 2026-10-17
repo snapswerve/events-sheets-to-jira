@@ -17,6 +17,14 @@
         "old_page_name"
       ],
       "platformMarkers": {
+        "web": {
+          "markerProperty": "page_name",
+          "pageProperties": [
+            "page_name",
+            "old_page_name",
+            "template_version"
+          ]
+        },
         "mobile": {
           "markerProperty": "screen_name",
           "markerReason": "This lets reporting treat this event and the screen view as the same screen.",
