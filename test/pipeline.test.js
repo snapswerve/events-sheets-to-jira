@@ -13,7 +13,7 @@ import { writeSamplePlan } from '../examples/build-sample-plan.js';
 import { readEventingPlan } from '../src/reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets } from '../src/pipeline.js';
 import { getOpenQuestions, sampleValue, formatFieldTable } from '../src/dev-notes.js';
-import { findMisfiledTracks, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
+import { findMisfiledTracks, findAppScreenLoadTracks, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
 import { parseTrackTab } from '../src/parser.js';
 import { getRowUrl } from '../src/links.js';
 import { SAMPLE_TABS } from '../examples/build-sample-plan.js';
@@ -190,6 +190,45 @@ test('page-load tracks get the matching page name, or an open question', () => {
 
   // The page event lists the tracks that must use its name
   assert.match(find(tickets, 'web-page', 'Checkout').description, /\{\{Checkout\}\}, must exactly match \{\{page_name\}\} on the page-load track events for this page: Checkout Started\./);
+});
+
+test('the misfiled hold-back only applies to web; app screen loads get a question, server ones are skipped', () => {
+  const base = events.find((e) => e.eventName === 'Home Viewed');
+  const variant = (eventName, sourceRow, generatingSource, whenFired = base.whenFired) => ({
+    ...base,
+    eventName,
+    sourceRow,
+    generatingSource,
+    templates: '',
+    whenFired,
+    properties: base.properties.filter((p) => p.name.toLowerCase() !== 'page_name'),
+  });
+  const webOnly = variant('Fx Web Viewed', 901, 'Web');
+  const appOnly = variant('Fx App Viewed', 902, 'Mobile', 'Fires when the article screen loads in the app');
+  const mixed = variant('Fx Mixed Viewed', 903, 'Web; Mobile');
+  const serverOnly = variant('Fx Server Loaded', 904, 'Server', 'Fires when the page loads on the server');
+  const plan = [webOnly, appOnly, mixed, serverOnly];
+  const cfg = loadCompanyConfig();
+
+  assert.deepEqual(findMisfiledTracks(plan, cfg).map((e) => e.eventName), ['Fx Web Viewed', 'Fx Mixed Viewed']);
+  assert.deepEqual(findAppScreenLoadTracks(plan, cfg).map((e) => e.eventName), ['Fx App Viewed']);
+
+  const tickets = buildTickets(plan, { config: cfg, planEvents: plan });
+  const appQuestions = getOpenQuestions(tickets.find((t) => t.eventName === 'Fx App Viewed')).join('\n');
+  assert.match(appQuestions, /reads like a screen load, but there's no \{\{page_name\}\}/);
+  assert.doesNotMatch(appQuestions, /belongs on the Page\/Screen tab/);
+  const serverQuestions = getOpenQuestions(tickets.find((t) => t.eventName === 'Fx Server Loaded')).join('\n');
+  assert.doesNotMatch(serverQuestions, /belongs on the Page\/Screen tab|reads like a screen load/);
+
+  // Holding app tracks back too is one config change
+  const strict = normalizeConfig({ rules: { pageLoad: { enabled: true, holdMisfiledPlatforms: ['web', 'mobile'] } } });
+  assert.deepEqual(findMisfiledTracks(plan, strict).map((e) => e.eventName), ['Fx Web Viewed', 'Fx App Viewed', 'Fx Mixed Viewed']);
+  assert.deepEqual(findAppScreenLoadTracks(plan, strict), []);
+
+  // The app question text is configurable
+  const custom = normalizeConfig({ rules: { pageLoad: { enabled: true, appScreenLoadQuestion: 'Ask Analytics about {{marker}} for app screens.' } } });
+  const custQuestions = getOpenQuestions(buildTickets([appOnly], { config: custom, planEvents: [appOnly] })[0]).join('\n');
+  assert.match(custQuestions, /Ask Analytics about \{\{page_name\}\} for app screens\./);
 });
 
 test('track events that read like page views are flagged', () => {

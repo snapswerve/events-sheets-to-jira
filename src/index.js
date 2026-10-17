@@ -18,7 +18,7 @@ import { readEventingPlan } from './reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets, isTicketed, JIRA_DESCRIPTION_LIMIT } from './pipeline.js';
 import { getOpenQuestions } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
-import { loadCompanyConfig, describeConfig, findMisfiledTracks, rowKey } from './rules.js';
+import { loadCompanyConfig, describeConfig, findMisfiledTracks, findAppScreenLoadTracks, rowKey } from './rules.js';
 import { getJiraConfig, detectJiraSetup, createJiraTicket, findExistingTickets, issueUrl } from './jira.js';
 import { exportToXlsx, exportToCsv, outputPath, toCsv } from './exporter.js';
 
@@ -203,6 +203,16 @@ async function main() {
       selected = selected.filter((e) => !heldRows.has(rowKey(e)));
       console.log(`   ⏸️  Held back ${plural(held.length, 'event')} from ticketing — fix the plan, or add --include-flagged`);
     }
+  }
+
+  // App-only tracks that read like a screen load aren't held back; their tickets get an open question
+  const selectedRows = new Set(selected.map(rowKey));
+  const appScreenLoads = findAppScreenLoadTracks(events, config).filter((e) => selectedRows.has(rowKey(e)));
+  if (appScreenLoads.length > 0) {
+    const marker = config.rules.pageLoad.markerProperty;
+    const verb = appScreenLoads.length === 1 ? 'reads' : 'read';
+    console.log(`\n📱 ${plural(appScreenLoads.length, 'app track event')} ${verb} like a screen load without ${marker} — ticketed with an open question about how screen loads should show in reporting:`);
+    for (const e of appScreenLoads) console.log(`   - ${e.eventName} (Track row ${e.sourceRow})`);
   }
 
   // ─── Map + render ───
