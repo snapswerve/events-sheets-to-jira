@@ -22,6 +22,40 @@ function markerException(ticket) {
     : '';
 }
 
+// Legacy-name properties keep their case too: old_page_name (unless this ticket doesn't send it because
+// it's another platform's page-load property), and, with per-platform markers, old_<marker> when it's in
+// the ticket's own page-load properties and sent (e.g. old_screen_name on app tickets)
+function legacyNameExceptions(ticket, { oldPageName = true } = {}) {
+  const fields = (ticket.properties || []).map((f) => f.name.toLowerCase());
+  const omitted = (ticket.omittedProperties || []).map((p) => p.name.toLowerCase());
+  const names = [];
+  if (oldPageName && !omitted.includes('old_page_name')) names.push('old_page_name');
+  const own = `old_${String(ticket.markerProperty || '').toLowerCase()}`;
+  if (!names.includes(own) && fields.includes(own) && (ticket.platformPageProperties || []).includes(own)) names.push(own);
+  return names.map((name) => `\n ** except for \`${name}\` property`).join('');
+}
+
+// One line under the properties table naming the plan row's properties this ticket doesn't send:
+// other platforms' page-load properties (pageLoad.platformMarkers), e.g. screen_name on a web ticket
+function omittedNote(ticket) {
+  const omitted = ticket.omittedProperties || [];
+  if (omitted.length === 0) return '';
+  const groups = [];
+  for (const { name, platforms } of omitted) {
+    const owners = joinWords(platforms);
+    let group = groups.find((g) => g.owners === owners);
+    if (!group) groups.push((group = { owners, names: [] }));
+    group.names.push(`{{${name}}}`);
+  }
+  const parts = groups.map((g) => `${g.names.join(', ')} (${g.owners} page-load ${g.names.length === 1 ? 'property' : 'properties'})`);
+  return `\n\n*Not sent on this platform:* ${parts.join('; ')} — the plan row lists them for other platforms' tickets.`;
+}
+
+/** "a", "a and b", "a, b and c" */
+function joinWords(words) {
+  return words.length <= 1 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
 function planLink() {
   const url = getPlanUrl();
   return url ? `[eventing plan|${url}]` : 'eventing plan';
@@ -45,7 +79,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props, 'Property', ticket.wrapper)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}${omittedNote(ticket)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -80,8 +114,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)${markerException(ticket)}
- ** except for \`old_page_name\` property`,
+ ** except for event name (page, track)${markerException(ticket)}${legacyNameExceptions(ticket)}`,
   };
 }
 
@@ -102,7 +135,7 @@ h3. "${ticket.eventName}" page event
 *Fires when:* ${ticket.whenFired || 'Not specified'}
 
 *Properties:*
-${formatFieldTable(props, 'Property', ticket.wrapper)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}${omittedNote(ticket)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -137,8 +170,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)${markerException(ticket)}
- ** except for \`old_page_name\` property`,
+ ** except for event name (page, track)${markerException(ticket)}${legacyNameExceptions(ticket)}`,
   };
 }
 
@@ -214,7 +246,7 @@ h3. ${ticket.eventName}
  * For ${ticket.idState || 'identified'} users
 
 *Properties:*
-${formatFieldTable(props, 'Property', ticket.wrapper)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}${omittedNote(ticket)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -240,8 +272,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)${markerException(ticket)}
- ** except for \`old_page_name\` property`,
+ ** except for event name (page, track)${markerException(ticket)}${legacyNameExceptions(ticket)}`,
   };
 }
 
@@ -308,7 +339,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props, 'Property', ticket.wrapper)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}${omittedNote(ticket)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -337,8 +368,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)${markerException(ticket)}
- ** except for \`old_page_name\` property`,
+ ** except for event name (page, track)${markerException(ticket)}${legacyNameExceptions(ticket)}`,
   };
 }
 
@@ -360,7 +390,7 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatFieldTable(props, 'Property', ticket.wrapper)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}${omittedNote(ticket)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
@@ -389,7 +419,7 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)${markerException(ticket)}`,
+ ** except for event name (page, track)${markerException(ticket)}${legacyNameExceptions(ticket, { oldPageName: false })}`,
   };
 }
 

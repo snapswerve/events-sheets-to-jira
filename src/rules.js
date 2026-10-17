@@ -14,15 +14,19 @@
  *     `notPageLoads` lists tracks that carry the marker but don't fire on a page load; if they still
  *     carry any `pageProperties` (page_name by default), the ticket asks for them to be removed
  *   - Track events whose trigger reads like a page/screen load but have no marker are flagged as
- *     likely misfiled (they belong on the Page/Screen tab) and held back from ticketing — but only
- *     when the event routes to a platform in `holdMisfiledPlatforms` and lacks that platform's marker.
- *     Not set, it's web plus every platform with a `platformMarkers` entry. App ones that aren't held
- *     are ticketed with an open question instead (`appScreenLoadQuestion`), since how app screen loads
- *     should show in reporting can differ from web page loads; server-only ones are skipped
+ *     likely misfiled (they belong on the Page/Screen tab). Hold-back is per ticket: a ticket is held
+ *     back when its platform is in `holdMisfiledPlatforms` and the event lacks that platform's marker;
+ *     the event's other tickets are still generated. Not set, it's web plus every platform with a
+ *     `platformMarkers` entry. App ones that aren't held are ticketed with an open question instead
+ *     (`appScreenLoadQuestion`), since how app screen loads should show in reporting can differ from
+ *     web page loads; server-only ones are skipped
  *   - `platformMarkers` ({ "mobile": { "markerProperty": "screen_name", "pageProperties": [...],
  *     "markerReason": "..." } }) gives a platform (web / mobile / server) its own marker, page
  *     properties and reason; platforms without an entry use the top-level ones. Each ticket uses its
- *     own platform's, e.g. app screen-load tracks carry screen_name while web page loads carry page_name
+ *     own platform's, e.g. app screen-load tracks carry screen_name while web page loads carry page_name.
+ *     A property in some platform's marker set (its markerProperty or pageProperties) but not in the
+ *     ticket's own platform's set is left off that ticket and noted as "not sent on this platform", so
+ *     one row can list page_name and screen_name and each ticket sends only its own set
  *
  * Wrappers (wrappers.web / .mobile / .server): a company's own tracking helper (e.g. a global analytics abstraction).
  *   providesProperties are set by the wrapper, so snippets leave them out and the table says so;
@@ -120,12 +124,46 @@ export function describeConfig(config) {
 
 /**
  * Track events that read like a page/screen load but don't carry the marker property —
- * usually page views filed on the Track tab. Empty when the rule is off.
+ * usually page views filed on the Track tab. These are the events with at least one held-back
+ * ticket (see findHeldTickets); their other tickets are still generated. Empty when the rule is off.
  */
 export function findMisfiledTracks(events, config) {
   const rule = config.rules.pageLoad;
   if (!rule.enabled) return [];
   return events.filter((e) => missingMarkers(e, rule).length > 0);
+}
+
+/**
+ * The ticket instances held back by the page-load rule: [{ event, platform, marker, templateType,
+ * instanceLabel }] for each ticket whose platform is in holdMisfiledPlatforms and whose event reads
+ * like a load but lacks that platform's marker. Same routing as the tickets (mapper.resolveInstances).
+ */
+export function findHeldTickets(events, config) {
+  const rule = config.rules.pageLoad;
+  if (!rule.enabled) return [];
+  return events.flatMap((event) =>
+    resolveInstances(event)
+      .map((instance) => ({ instance, held: ticketHold({ ...event, platform: instance.platform }, rule) }))
+      .filter(({ held }) => held)
+      .map(({ instance, held }) => ({ event, ...held, templateType: instance.templateType, instanceLabel: instance.instanceLabel })),
+  );
+}
+
+/**
+ * Why one ticket (an event routed to a platform) is held back: { platform, marker } when its platform
+ * is a hold platform, the event reads like a load and lacks that platform's marker; null otherwise.
+ */
+export function heldTicketMarker(ticket, config) {
+  const rule = config.rules.pageLoad;
+  return rule.enabled ? ticketHold(ticket, rule) : null;
+}
+
+function ticketHold(ticket, rule) {
+  if (ticket.tabType !== 'track' || !looksLikeLoad(ticket)) return null;
+  const platform = String(ticket.platform || '').toLowerCase();
+  if (!lowerList(rule.holdMisfiledPlatforms).includes(platform)) return null;
+  const marker = platformRule(rule, platform).markerProperty;
+  return hasProperty(ticket, marker) ? null : { platform, marker };
 }
 
 /**
@@ -183,6 +221,41 @@ function platformEntry(rule, platform) {
     if (name.toLowerCase() === key && isObject(entry)) found = entry;
   }
   return found;
+}
+
+/**
+ * Each platform's marker set — its effective markerProperty plus pageProperties, lowercased — for web,
+ * mobile, server and any other platformMarkers key. Empty when there are no platformMarkers entries.
+ */
+export function platformMarkerSets(rule) {
+  const keys = platformMarkerKeys(rule);
+  if (keys.length === 0) return new Map();
+  const sets = new Map();
+  for (const platform of [...new Set(['web', 'mobile', 'server', ...keys])]) {
+    const { markerProperty, pageProperties } = platformRule(rule, platform);
+    sets.set(platform, new Set([markerProperty, ...[].concat(pageProperties || [])].map((p) => String(p).toLowerCase())));
+  }
+  return sets;
+}
+
+/**
+ * Splits a ticket's fields for its platform: properties in another platform's marker set but not in
+ * this platform's own are omitted ({ name, platforms } — the platforms they belong to). Properties in
+ * no marker set stay. Without platformMarkers nothing is omitted.
+ */
+export function splitPlatformProperties(fields, platform, rule) {
+  const sets = platformMarkerSets(rule);
+  const own = sets.get(String(platform || '').toLowerCase());
+  if (!own) return { kept: fields, omitted: [] };
+  const kept = [];
+  const omitted = [];
+  for (const field of fields) {
+    const name = String(field.name).toLowerCase();
+    const owners = [...sets].filter(([, set]) => set.has(name)).map(([p]) => p);
+    if (owners.length > 0 && !own.has(name)) omitted.push({ name: field.name, platforms: owners });
+    else kept.push(field);
+  }
+  return { kept, omitted };
 }
 
 /** The platforms (lowercased, once each) with a platformMarkers entry. */
@@ -250,13 +323,31 @@ export function buildRuleContext(planEvents, config) {
  */
 export function applyRules(ticket, ctx) {
   const rule = ctx.config.rules.pageLoad;
-  const out = { ...ticket, pageLoad: false, ruleQuestions: [], ruleNotes: [] };
+  const out = { ...ticket, pageLoad: false, heldBack: null, ruleQuestions: [], ruleNotes: [] };
 
   if (rule.enabled) {
     // This ticket's platform marker, page properties and reason (platformMarkers, else the top-level ones)
     const platformLoad = { ...rule, ...platformRule(rule, ticket.platform) };
     const marker = platformLoad.markerProperty;
     out.markerProperty = marker;
+    // Held back from ticketing (unless --include-flagged): its platform's marker is missing on a load
+    out.heldBack = ticketHold(ticket, rule);
+
+    // Other platforms' page-load properties (e.g. screen_name on a web ticket) aren't sent on this one
+    if (ticket.tabType !== 'identify' && Array.isArray(ticket.properties)) {
+      const own = platformMarkerSets(rule).get(String(ticket.platform || '').toLowerCase());
+      if (own) out.platformPageProperties = [...own];
+      const { kept, omitted } = splitPlatformProperties(ticket.properties, ticket.platform, rule);
+      if (omitted.length > 0) {
+        // Name the platforms this event routes to when they own the property (else every owner)
+        const routed = eventPlatforms(ticket);
+        out.properties = kept;
+        out.omittedProperties = omitted.map(({ name, platforms }) => {
+          const mine = platforms.filter((p) => routed.includes(p));
+          return { name, platforms: mine.length > 0 ? mine : platforms };
+        });
+      }
+    }
     out.pageLoad = ticket.tabType === 'page' || ticket.tabType === 'screen' || (ticket.tabType === 'track' && isPageLoadTrack(ticket, platformLoad));
 
     if (ticket.tabType === 'track' && out.pageLoad) {
@@ -265,7 +356,7 @@ export function applyRules(ticket, ctx) {
       const expected = rule.pageNames[ticket.eventName] || matchPageName(ticket.eventName, names);
       if (expected) {
         out.expectedPageName = expected;
-        out.properties = ticket.properties.map((p) => (p.name.toLowerCase() === marker.toLowerCase() ? { ...p, expectedValue: expected } : p));
+        out.properties = out.properties.map((p) => (p.name.toLowerCase() === marker.toLowerCase() ? { ...p, expectedValue: expected } : p));
         out.ruleNotes.push({
           title: 'Page name',
           body: `Set {{${marker}}} to {{${expected}}}, exactly the name the *${expected}* page/screen event uses. ${platformLoad.markerReason}`,

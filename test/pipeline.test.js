@@ -11,9 +11,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { writeSamplePlan } from '../examples/build-sample-plan.js';
 import { readEventingPlan } from '../src/reader.js';
-import { loadEvents, filterEvents, buildTickets, filterTickets } from '../src/pipeline.js';
+import { loadEvents, filterEvents, buildTickets, holdBackTickets, filterTickets } from '../src/pipeline.js';
 import { getOpenQuestions, sampleValue, formatFieldTable } from '../src/dev-notes.js';
-import { findMisfiledTracks, findAppScreenLoadTracks, misfiledMarkers, platformRule, describeConfig, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
+import { findMisfiledTracks, findHeldTickets, heldTicketMarker, findAppScreenLoadTracks, misfiledMarkers, platformRule, describeConfig, matchPageName, normalizeConfig, loadCompanyConfig } from '../src/rules.js';
 import { parseTrackTab } from '../src/parser.js';
 import { getRowUrl } from '../src/links.js';
 import { SAMPLE_TABS } from '../examples/build-sample-plan.js';
@@ -508,4 +508,138 @@ test('the sample plan under the example config holds Home Viewed back for both m
   const tickets = buildTickets(events, { config: example });
   assert.equal(find(tickets, 'web-track', 'Checkout Started').pageLoad, true);
   assert.equal(find(tickets, 'mobile-track', 'Checkout Started').pageLoad, false);
+});
+
+// ─── Per-ticket hold-back and per-ticket page-load properties ───
+
+const exampleConfig = () => normalizeConfig(JSON.parse(fs.readFileSync(new URL('../data/company.example.json', import.meta.url), 'utf-8')));
+
+// Checkout Started as one row for web and app: Page "Checkout" and Screen "Checkout" both exist
+function checkoutScenario(extraProps = []) {
+  const base = events.find((e) => e.eventName === 'Checkout Started');
+  const like = base.properties.find((p) => p.name === 'page_name');
+  // (Named apart from the sample's Checkout Started so template overrides can't reroute it)
+  const event = {
+    ...base,
+    eventName: 'Fx Checkout Started',
+    sourceRow: 500,
+    generatingSource: 'Web; Mobile',
+    templates: 'web checkout\nmobile app checkout',
+    whenFired: 'Fires when the checkout page/screen loads',
+    properties: [...base.properties, ...extraProps.map((name) => ({ ...like, name }))],
+  };
+  const screen = { ...sampleView('screen', 'Product Detail'), eventName: 'Checkout', sourceRow: 60 };
+  return { event, plan: [sampleView('page', 'Checkout'), screen, event] };
+}
+const section = (description, start, end = '{code}') => description.split(start)[1].split(end)[0];
+
+test('only page_name on a web + app row: the web ticket is generated, the app ticket is held', () => {
+  const config = exampleConfig();
+  const { event, plan } = checkoutScenario();
+
+  // The event-level API still lists the event; the ticket-level one names the held ticket
+  assert.deepEqual(findMisfiledTracks(plan, config).map((e) => e.eventName), ['Fx Checkout Started']);
+  assert.deepEqual(findHeldTickets(plan, config).map(({ event: e, platform, marker, templateType, instanceLabel }) => [e.eventName, platform, marker, templateType, instanceLabel]), [
+    ['Fx Checkout Started', 'mobile', 'screen_name', 'mobile-track', 'mobile app checkout'],
+  ]);
+
+  const built = buildTickets([event], { config, planEvents: plan });
+  const { tickets, held } = holdBackTickets(built, { config });
+  assert.deepEqual(tickets.map((t) => t.templateType), ['web-track']);
+  assert.deepEqual(held.map((t) => [t.templateType, t.heldBack]), [['mobile-track', { platform: 'mobile', marker: 'screen_name' }]]);
+  assert.equal(heldTicketMarker(tickets[0], config), null);
+
+  const web = tickets[0];
+  assert.equal(web.pageLoad, true);
+  assert.equal(web.expectedPageName, 'Checkout');
+  assert.match(web.description, /page_name: 'Checkout',/);
+
+  // --include-flagged (or holdMisfiledTracks off) keeps both; the held ticket's question is unchanged
+  assert.equal(holdBackTickets(built, { config, includeFlagged: true }).tickets.length, 2);
+  const lenient = normalizeConfig({ ...config, rules: { pageLoad: { ...config.rules.pageLoad, holdMisfiledTracks: false } } });
+  assert.equal(holdBackTickets(built, { config: lenient }).held.length, 0);
+  assert.match(getOpenQuestions(held[0]).join('\n'), /reads like a page\/screen load, but there's no \{\{screen_name\}\}\. If this is a page view, it belongs on the Page\/Screen tab; if it's a track event that fires on page load, add \{\{screen_name\}\}\./);
+  // ...and it doesn't ask the app developer to send the web marker
+  assert.deepEqual(held[0].properties.filter((p) => p.name === 'page_name'), []);
+  assert.match(held[0].description, /\*Not sent on this platform:\* \{\{page_name\}\} \(web page-load property\)/);
+});
+
+test('page_name and screen_name on one row: each ticket sends only its own marker set', () => {
+  const config = exampleConfig();
+  const { event, plan } = checkoutScenario(['old_page_name', 'template_version', 'screen_name', 'old_screen_name', 'shopping_enabled']);
+  assert.deepEqual(findMisfiledTracks(plan, config), []);
+  assert.deepEqual(findHeldTickets(plan, config), []);
+
+  const { tickets, held } = holdBackTickets(buildTickets([event], { config, planEvents: plan }), { config });
+  assert.equal(held.length, 0);
+  const web = find(tickets, 'web-track', 'Fx Checkout Started');
+  const app = find(tickets, 'mobile-track', 'Fx Checkout Started');
+  const names = (t) => t.properties.map((p) => p.name);
+
+  // Web: page_name, old_page_name, template_version; no screen properties anywhere but the note
+  for (const name of ['page_name', 'old_page_name', 'template_version', 'shopping_enabled', 'checkout_id']) assert.ok(names(web).includes(name), name);
+  for (const name of ['screen_name', 'old_screen_name']) assert.ok(!names(web).includes(name), name);
+  assert.deepEqual(web.omittedProperties, [{ name: 'screen_name', platforms: ['mobile'] }, { name: 'old_screen_name', platforms: ['mobile'] }]);
+  assert.match(web.description, /\n\n\*Not sent on this platform:\* \{\{screen_name\}\}, \{\{old_screen_name\}\} \(mobile page-load properties\) — the plan row lists them for other platforms' tickets\.\n/);
+  const webText = web.description.replace(/\*Not sent on this platform:\*.*\n/, '');
+  assert.doesNotMatch(webText, /screen_name/);
+  assert.doesNotMatch(section(web.description, '{code:json}'), /screen_name/);
+  assert.match(section(web.description, '{code:json}'), /"page_name": "Checkout"/);
+  assert.match(web.description, /except for `page_name` property \(must match the page name exactly\)\n \*\* except for `old_page_name` property/);
+  assert.doesNotMatch(web.description, /except for `old_screen_name`/);
+
+  // App: screen_name (the Screen's name), old_screen_name; no page properties anywhere but the note
+  for (const name of ['screen_name', 'old_screen_name', 'shopping_enabled', 'checkout_id']) assert.ok(names(app).includes(name), name);
+  for (const name of ['page_name', 'old_page_name', 'template_version']) assert.ok(!names(app).includes(name), name);
+  assert.equal(app.pageLoad, true);
+  assert.equal(app.expectedPageName, 'Checkout');
+  assert.match(app.description, /\*Not sent on this platform:\* \{\{page_name\}\}, \{\{old_page_name\}\}, \{\{template_version\}\} \(web page-load properties\)/);
+  const appText = app.description.replace(/\*Not sent on this platform:\*.*\n/, '');
+  assert.doesNotMatch(appText, /page_name|template_version/);
+  assert.match(section(app.description, '{code:javascript}'), /screen_name: 'Checkout',[\s\S]*old_screen_name:/);
+  assert.match(section(app.description, '{code:json}'), /"screen_name": "Checkout"/);
+  assert.match(app.description, /\|\{\{old_screen_name\}\}\|/);
+  assert.match(app.description, /except for `screen_name` property \(must match the screen name exactly\)\n \*\* except for `old_screen_name` property`?$/m);
+  assert.doesNotMatch(app.description, /except for `old_page_name`/);
+  // Open questions only cover what the ticket sends
+  assert.doesNotMatch(getOpenQuestions(app).join('\n'), /page_name|template_version/);
+});
+
+test('page/screen tickets also leave off other platforms\' page-load properties', () => {
+  const config = exampleConfig();
+  const page = { ...sampleView('page', 'Checkout') };
+  page.properties = [...page.properties, { ...page.properties[0], name: 'screen_name' }];
+  const [ticket] = buildTickets([page], { config, planEvents: [page] });
+  assert.deepEqual(ticket.properties.map((p) => p.name), ['old_page_name', 'template_version', 'cart_value']);
+  assert.match(ticket.description, /\*Not sent on this platform:\* \{\{screen_name\}\} \(mobile page-load property\)/);
+});
+
+test('without platformMarkers nothing is left off and no ticket is held for another platform', () => {
+  const config = loadCompanyConfig();
+  const { event, plan } = checkoutScenario(['old_page_name', 'screen_name', 'old_screen_name']);
+  const tickets = buildTickets([event], { config, planEvents: plan });
+  for (const t of tickets) {
+    assert.equal(t.omittedProperties, undefined, t.summary);
+    assert.ok(t.properties.some((p) => p.name === 'screen_name') && t.properties.some((p) => p.name === 'page_name'), t.summary);
+    assert.doesNotMatch(t.description, /Not sent on this platform|except for `old_screen_name`/, t.summary);
+    assert.match(t.description, /except for `old_page_name` property/, t.summary);
+  }
+  // Rules off: nothing is held or left off
+  assert.deepEqual(findHeldTickets(plan, RULES_OFF), []);
+  assert.ok(buildTickets([event], { config: RULES_OFF, planEvents: plan }).every((t) => !t.heldBack && !t.omittedProperties));
+});
+
+test('Home Viewed: only the tickets on hold platforms are held', () => {
+  // Fixture config (web only): the web ticket is held, the app ticket is generated with the question
+  const fixture = loadCompanyConfig();
+  const home = events.filter((e) => e.eventName === 'Home Viewed');
+  assert.deepEqual(findHeldTickets(events, fixture).map((h) => [h.event.eventName, h.platform, h.marker]), [['Home Viewed', 'web', 'page_name']]);
+  const { tickets, held } = holdBackTickets(buildTickets(home, { config: fixture, planEvents: events }), { config: fixture });
+  assert.deepEqual([tickets.map((t) => t.platform), held.map((t) => t.platform)], [['Mobile'], ['Web']]);
+  assert.match(getOpenQuestions(tickets[0]).join('\n'), /belongs on the Page\/Screen tab/);
+
+  // Example config (web + mobile markers): both are held
+  const example = exampleConfig();
+  assert.deepEqual(findHeldTickets(events, example).map((h) => [h.platform, h.marker]), [['web', 'page_name'], ['mobile', 'screen_name']]);
+  assert.equal(holdBackTickets(buildTickets(home, { config: example, planEvents: events }), { config: example }).tickets.length, 0);
 });

@@ -15,7 +15,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import readline from 'readline/promises';
 import { readEventingPlan } from './reader.js';
-import { loadEvents, filterEvents, buildTickets, filterTickets, isTicketed, JIRA_DESCRIPTION_LIMIT } from './pipeline.js';
+import { loadEvents, filterEvents, buildTickets, holdBackTickets, filterTickets, isTicketed, JIRA_DESCRIPTION_LIMIT } from './pipeline.js';
 import { getOpenQuestions } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
 import { loadCompanyConfig, describeConfig, findMisfiledTracks, findAppScreenLoadTracks, misfiledMarkers, platformRule, rowKey } from './rules.js';
@@ -36,7 +36,7 @@ Filters (lists are comma-separated):
   --platform web,mobile  Only these platforms: web, mobile, server
   --event "checkout"     Only events whose name (or identify trigger) contains this text
   --skip-ticketed        Leave out events whose Jira Tickets column in the plan already lists a ticket
-  --include-flagged      Ticket track events the page-load rule flags as likely page views (held back by default)
+  --include-flagged      Also generate tickets the page-load rule holds back (a load-like track missing that platform's marker)
   --limit N              Only the first N tickets — handy for a first --live test
 
 Output:
@@ -178,7 +178,7 @@ async function main() {
   console.log(`🧩 Company rules: ${describeConfig(config) || 'none (add data/company.json to turn rules on — see README)'}`);
 
   // ─── Filter ───
-  let selected = filterEvents(events, opts.eventFilters);
+  const selected = filterEvents(events, opts.eventFilters);
   if (filterSummary) logTabCounts('🎯 After filters:', selected);
 
   if (opts.eventFilters.skipTicketed) {
@@ -202,14 +202,13 @@ async function main() {
       const detail = markers.length === 1 ? '' : ` — no ${missing.get(e).map((m) => `${m.marker} on ${m.platform}`).join(', ')}`;
       console.log(`   - ${e.eventName} (Track row ${e.sourceRow}): "${e.whenFired.replace(/\s+/g, ' ')}"${detail}`);
     }
-
-    const heldRows = new Set(misfiled.map(rowKey));
-    const held = selected.filter((e) => heldRows.has(rowKey(e)));
-    if (held.length > 0 && config.rules.pageLoad.holdMisfiledTracks && !opts.includeFlagged) {
-      selected = selected.filter((e) => !heldRows.has(rowKey(e)));
-      console.log(`   ⏸️  Held back ${plural(held.length, 'event')} from ticketing — fix the plan, or add --include-flagged`);
-    }
   }
+
+  // ─── Map + render ───
+  // Hold-back is per ticket: only tickets missing their own platform's marker are held; the rest still go
+  const built = buildTickets(selected, { source: { spreadsheetId: data.spreadsheetId, tabGids: data.tabGids }, devNotes: opts.devNotes, config, planEvents: events });
+  const { tickets: kept, held } = holdBackTickets(built, { config, includeFlagged: opts.includeFlagged });
+  logHeldTickets(filterTickets(held, { platforms: opts.ticketFilters.platforms }), kept);
 
   // App-only tracks that read like a screen load aren't held back; their tickets get an open question
   const selectedRows = new Set(selected.map(rowKey));
@@ -221,11 +220,7 @@ async function main() {
     for (const e of appScreenLoads) console.log(`   - ${e.eventName} (Track row ${e.sourceRow})`);
   }
 
-  // ─── Map + render ───
-  const tickets = filterTickets(
-    buildTickets(selected, { source: { spreadsheetId: data.spreadsheetId, tabGids: data.tabGids }, devNotes: opts.devNotes, config, planEvents: events }),
-    opts.ticketFilters,
-  );
+  const tickets = filterTickets(kept, opts.ticketFilters);
 
   console.log(`\n🎟️  Total ticket instances to generate: ${tickets.length}`);
 
@@ -423,6 +418,27 @@ function writeRoutingReport(tickets) {
   const debugPath = outputPath('./output', 'routing-debug', 'csv');
   fs.writeFileSync(debugPath, toCsv([headers, ...rows]), 'utf-8');
   console.log(`🧭 Routing debug report written: ${debugPath}`);
+}
+
+// ─── Held-back tickets ───
+
+/** Names each held ticket (event + platform, missing marker), and says when its event's other tickets still go. */
+function logHeldTickets(held, kept) {
+  if (held.length === 0) return;
+  const byEvent = new Map();
+  for (const t of held) {
+    const key = rowKey(t);
+    if (!byEvent.has(key)) byEvent.set(key, []);
+    byEvent.get(key).push(t);
+  }
+  const keptRows = new Set(kept.map(rowKey));
+  console.log(`   ⏸️  Held back ${plural(held.length, 'ticket')} from ticketing — fix the plan, or add --include-flagged:`);
+  for (const tickets of byEvent.values()) {
+    const [first] = tickets;
+    const which = tickets.map((t) => `${t.platform} · ${t.instanceLabel} (no ${t.heldBack.marker})`).join(', ');
+    const others = keptRows.has(rowKey(first)) ? ' — its other tickets are still generated' : '';
+    console.log(`      - ${first.eventName} (Track row ${first.sourceRow}): ${which}${others}`);
+  }
 }
 
 // ─── Helpers ───
