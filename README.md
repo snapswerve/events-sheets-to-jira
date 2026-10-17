@@ -215,6 +215,7 @@ Rules and notes that depend on the company live in `data/company.json` (gitignor
       "markerProperty": "page_name",
       "markerReason": "Why the value must match, shown to developers.",
       "holdMisfiledTracks": true,
+      "holdMisfiledPlatforms": ["web"],
       "pageNames": { "Model Viewed": "Model" },
       "notPageLoads": ["Model Comparison Added"]
     }
@@ -242,7 +243,7 @@ Rules and notes that depend on the company live in `data/company.json` (gitignor
 - Page/screen tickets list the track events that must send their name
 - `notPageLoads` lists track events that carry the marker but don't fire on a page load — if they still carry any of `pageProperties` (e.g. `page_name`, `old_page_name`), the ticket asks for those to be removed from the plan
 - Tickets that send the marker add it to the acceptance criteria's lowercase exceptions, since it must match the page name exactly
-- **Plan check:** track events whose trigger reads like a page/screen load but have no marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`)
+- **Plan check:** track events whose trigger reads like a page/screen load but have no marker are listed as likely page views that belong on the Page/Screen tab, and held back from ticketing (`holdMisfiledTracks`; override with `--include-flagged`). Only events that route to a platform in `holdMisfiledPlatforms` are held back (default `["web"]`, using the same Templates / Generating Source routing as the tickets). App-only ones are ticketed with an open question instead, `appScreenLoadQuestion` (override the text; `{{marker}}` is replaced), since how app screen loads should show in reporting can differ from web page loads. Server-only ones are skipped. Add `"mobile"` to `holdMisfiledPlatforms` once app screen loads must carry the marker too
 
 **Wrappers** (`wrappers.web` / `.mobile` / `.server`) describe a company's own tracking helper. `providesProperties` are set by the helper, so snippets leave them out and the properties table says "set by …". `snippets.track` / `.page` / `.screen` / `.identify` replace the default SDK call for that platform, with `{{name}}` (the event or page name) and `{{props}}` (the properties object) filled in. Call types without a snippet keep the default. `setsUserId: true` means the helper identifies the user itself, so tickets don't ask developers to pass a user ID.
 

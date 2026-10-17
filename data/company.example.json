@@ -6,6 +6,9 @@
       "markerProperty": "page_name",
       "markerReason": "This lets reporting treat this event and the page view as the same page.",
       "holdMisfiledTracks": true,
+      "holdMisfiledPlatforms": [
+        "web"
+      ],
       "pageNames": {
         "Model Viewed": "Model"
       },

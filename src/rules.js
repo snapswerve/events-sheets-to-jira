@@ -14,7 +14,10 @@
  *     `notPageLoads` lists tracks that carry the marker but don't fire on a page load; if they still
  *     carry any `pageProperties` (page_name by default), the ticket asks for them to be removed
  *   - Track events whose trigger reads like a page/screen load but have no marker are flagged as
- *     likely misfiled (they belong on the Page/Screen tab) and held back from ticketing
+ *     likely misfiled (they belong on the Page/Screen tab) and held back from ticketing — but only
+ *     when the event routes to a platform in `holdMisfiledPlatforms` (web by default). App-only
+ *     ones are ticketed with an open question instead (`appScreenLoadQuestion`), since how app
+ *     screen loads should show in reporting can differ from web page loads; server-only ones are skipped
  *
  * Wrappers (wrappers.web / .mobile / .server): a company's own tracking helper (e.g. a global analytics abstraction).
  *   providesProperties are set by the wrapper, so snippets leave them out and the table says so;
@@ -29,6 +32,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { resolveInstances } from './mapper.js';
 
 const DEFAULT_CONFIG_PATH = new URL('../data/company.json', import.meta.url);
 
@@ -37,6 +41,11 @@ const PAGE_LOAD_DEFAULTS = {
   markerProperty: 'page_name',
   markerReason: 'This lets reporting treat this event and the page view as the same page.',
   holdMisfiledTracks: true,
+  // Platforms (web / mobile / server) whose misfiled tracks are held back; others get appScreenLoadQuestion
+  holdMisfiledPlatforms: ['web'],
+  // Open question for app tracks that read like a screen load but have no marker. {{marker}} is replaced
+  appScreenLoadQuestion:
+    "The trigger reads like a screen load, but there's no {{marker}}. Decide how app screen loads should show in reporting (Adobe Analytics, for one, keeps app screens and web pages in the same Page Name): send {{marker}} with the screen's exact name, or whatever property your reporting setup uses for screens.",
   pageNames: {},
   notPageLoads: [],
   pageProperties: [],
@@ -94,7 +103,33 @@ export function describeConfig(config) {
 export function findMisfiledTracks(events, config) {
   const rule = config.rules.pageLoad;
   if (!rule.enabled) return [];
+  const holdOn = lowerList(rule.holdMisfiledPlatforms);
+  return unmarkedLoadTracks(events, rule).filter((e) => eventPlatforms(e).some((p) => holdOn.includes(p)));
+}
+
+/**
+ * Unmarked track events that read like a load but aren't held back because they only route to
+ * app (mobile) tickets — they're ticketed with the appScreenLoadQuestion instead.
+ * Server-only events are left alone: a server call isn't a screen load.
+ */
+export function findAppScreenLoadTracks(events, config) {
+  const rule = config.rules.pageLoad;
+  if (!rule.enabled) return [];
+  const held = new Set(findMisfiledTracks(events, config).map(rowKey));
+  return unmarkedLoadTracks(events, rule).filter((e) => !held.has(rowKey(e)) && eventPlatforms(e).includes('mobile'));
+}
+
+function unmarkedLoadTracks(events, rule) {
   return events.filter((e) => e.tabType === 'track' && !hasProperty(e, rule.markerProperty) && looksLikeLoad(e));
+}
+
+/** The platforms an event's tickets route to (web / mobile / server), using the same routing as the tickets. */
+function eventPlatforms(event) {
+  return [...new Set(resolveInstances(event).map((i) => String(i.platform || '').toLowerCase()))];
+}
+
+function lowerList(value) {
+  return [].concat(value || []).map((v) => String(v).toLowerCase());
 }
 
 function looksLikeLoad(event) {
@@ -125,7 +160,8 @@ export function buildRuleContext(planEvents, config) {
   }
 
   const misfiledRows = new Set(findMisfiledTracks(planEvents, config).map(rowKey));
-  return { config, pageNames, screenNames, tracksByPage, misfiledRows };
+  const appScreenLoadRows = new Set(findAppScreenLoadTracks(planEvents, config).map(rowKey));
+  return { config, pageNames, screenNames, tracksByPage, misfiledRows, appScreenLoadRows };
 }
 
 /**
@@ -176,6 +212,8 @@ export function applyRules(ticket, ctx) {
 
     if (ctx.misfiledRows.has(rowKey(ticket))) {
       out.ruleQuestions.push(`The trigger reads like a page/screen load, but there's no {{${marker}}}. If this is a page view, it belongs on the Page/Screen tab; if it's a track event that fires on page load, add {{${marker}}}.`);
+    } else if (ctx.appScreenLoadRows?.has(rowKey(ticket)) && ticket.platform === 'Mobile') {
+      out.ruleQuestions.push(String(rule.appScreenLoadQuestion).split('{{marker}}').join(`{{${marker}}}`));
     }
   }
 
