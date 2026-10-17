@@ -6,9 +6,6 @@
       "markerProperty": "page_name",
       "markerReason": "This lets reporting treat this event and the page view as the same page.",
       "holdMisfiledTracks": true,
-      "holdMisfiledPlatforms": [
-        "web"
-      ],
       "pageNames": {
         "Model Viewed": "Model"
       },
@@ -18,7 +15,17 @@
       "pageProperties": [
         "page_name",
         "old_page_name"
-      ]
+      ],
+      "platformMarkers": {
+        "mobile": {
+          "markerProperty": "screen_name",
+          "markerReason": "This lets reporting treat this event and the screen view as the same screen.",
+          "pageProperties": [
+            "screen_name",
+            "old_screen_name"
+          ]
+        }
+      }
     }
   },
   "wrappers": {

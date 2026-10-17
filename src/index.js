@@ -18,7 +18,7 @@ import { readEventingPlan } from './reader.js';
 import { loadEvents, filterEvents, buildTickets, filterTickets, isTicketed, JIRA_DESCRIPTION_LIMIT } from './pipeline.js';
 import { getOpenQuestions } from './dev-notes.js';
 import { getPlanUrl } from './links.js';
-import { loadCompanyConfig, describeConfig, findMisfiledTracks, findAppScreenLoadTracks, rowKey } from './rules.js';
+import { loadCompanyConfig, describeConfig, findMisfiledTracks, findAppScreenLoadTracks, misfiledMarkers, platformRule, rowKey } from './rules.js';
 import { getJiraConfig, detectJiraSetup, createJiraTicket, findExistingTickets, issueUrl } from './jira.js';
 import { exportToXlsx, exportToCsv, outputPath, toCsv } from './exporter.js';
 
@@ -192,10 +192,16 @@ async function main() {
   // ─── Plan check: track events that look like page views ───
   const misfiled = findMisfiledTracks(events, config);
   if (misfiled.length > 0) {
-    const marker = config.rules.pageLoad.markerProperty;
+    // With per-platform markers (pageLoad.platformMarkers), say which marker each event is missing where
+    const missing = new Map(misfiled.map((e) => [e, misfiledMarkers(e, config)]));
+    const markers = [...new Set([...missing.values()].flat().map((m) => String(m.marker)))];
     const [verb, have] = misfiled.length === 1 ? ['reads', 'has'] : ['read', 'have'];
-    console.log(`\n🧹 Plan check: ${plural(misfiled.length, 'track event')} ${verb} like a page/screen load but ${have} no ${marker} — likely page views that belong on the Page/Screen tab:`);
-    for (const e of misfiled) console.log(`   - ${e.eventName} (Track row ${e.sourceRow}): "${e.whenFired.replace(/\s+/g, ' ')}"`);
+    const lacking = markers.length === 1 ? `${have} no ${markers[0]}` : `${have} no page-load marker (${markers.join(' / ')})`;
+    console.log(`\n🧹 Plan check: ${plural(misfiled.length, 'track event')} ${verb} like a page/screen load but ${lacking} — likely page views that belong on the Page/Screen tab:`);
+    for (const e of misfiled) {
+      const detail = markers.length === 1 ? '' : ` — no ${missing.get(e).map((m) => `${m.marker} on ${m.platform}`).join(', ')}`;
+      console.log(`   - ${e.eventName} (Track row ${e.sourceRow}): "${e.whenFired.replace(/\s+/g, ' ')}"${detail}`);
+    }
 
     const heldRows = new Set(misfiled.map(rowKey));
     const held = selected.filter((e) => heldRows.has(rowKey(e)));
@@ -209,7 +215,7 @@ async function main() {
   const selectedRows = new Set(selected.map(rowKey));
   const appScreenLoads = findAppScreenLoadTracks(events, config).filter((e) => selectedRows.has(rowKey(e)));
   if (appScreenLoads.length > 0) {
-    const marker = config.rules.pageLoad.markerProperty;
+    const marker = platformRule(config.rules.pageLoad, 'mobile').markerProperty;
     const verb = appScreenLoads.length === 1 ? 'reads' : 'read';
     console.log(`\n📱 ${plural(appScreenLoads.length, 'app track event')} ${verb} like a screen load without ${marker} — ticketed with an open question about how screen loads should show in reporting:`);
     for (const e of appScreenLoads) console.log(`   - ${e.eventName} (Track row ${e.sourceRow})`);
