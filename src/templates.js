@@ -1,23 +1,39 @@
 /**
  * templates.js — Jira wiki markup templates for each event type.
  *
- * These match the 7 .docx templates from the drive download.
+ * These match the 8 .docx templates from the drive download, plus a generated
+ * "Developer Notes" section (see dev-notes.js).
  * Jira Cloud wiki markup reference: https://jira.atlassian.com/secure/WikiRendererHelpAction.jspa?section=all
  *
  * Each function returns { summary, description } where description is Jira wiki markup.
  */
 
-const EVENTING_PLAN_URL = 'https://docs.google.com/spreadsheets/d/1k5Vn7e_326PiOGoir-r9GtZg2R3IRvqwpcOCJWMp8m0/edit';
+import { developerNotes, formatFieldTable, samplePayload } from './dev-notes.js';
+import { getPlanUrl } from './links.js';
+
+// page_name must equal the page event's name exactly, so it keeps its case like event names do
+function markerException(ticket) {
+  const marker = ticket.markerProperty;
+  const fields = ticket.properties || [];
+  return marker && fields.some((f) => f.name.toLowerCase() === marker.toLowerCase())
+    ? `\n ** except for \`${marker}\` property (must match the page name exactly)`
+    : '';
+}
+
+function planLink() {
+  const url = getPlanUrl();
+  return url ? `[eventing plan|${url}]` : 'eventing plan';
+}
 
 // ─── Web Track ───
 
-export function webTrack(ticket) {
+export function webTrack(ticket, options = {}) {
   const props = ticket.properties || [];
   return {
     summary: `[Instrumentation] Web Track: ${ticket.eventName}` + (ticket.instanceLabel !== 'web' ? ` (${ticket.instanceLabel})` : ''),
     description: `h2. Summary
 
-Implement the *${ticket.eventName}* event required for capturing ${ticket.whenFired || '_'} during their web session. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.eventName}* event required for capturing ${ticket.whenFired || '_'} during their web session. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -27,10 +43,11 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatProperties(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
+*Example payload (as received by Segment):*
 {code:json}
 ${buildTrackPayloadExample(ticket)}
 {code}
@@ -40,7 +57,7 @@ h3. Common Fields
 Every Track event includes OOB:
  * common context documentation: [https://www.twilio.com/docs/segment/connections/spec/common]
 
-h2. Chrome Extension
+${developerNotes(ticket, options)}h2. Chrome Extension
 
 Segment offers a Chrome extension, [Segment Inspector|https://chromewebstore.google.com/detail/segment-inspector-officia/jfcbmnpfbhhlhfclmiijpldieboendfo], which can be useful for validating event payloads.
 
@@ -61,20 +78,20 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
 
 // ─── Web Page ───
 
-export function webPage(ticket) {
+export function webPage(ticket, options = {}) {
   const props = ticket.properties || [];
   return {
     summary: `[Instrumentation] Web Page: ${ticket.eventName}`,
     description: `h2. Summary
 
-Implement the Segment *page()* event upon load of the ${ticket.eventName} page. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the Segment *page()* event upon load of the ${ticket.eventName} page. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -83,10 +100,11 @@ h3. "${ticket.eventName}" page event
 *Fires when:* ${ticket.whenFired || 'Not specified'}
 
 *Properties:*
-${formatProperties(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
+*Example payload (as received by Segment):*
 {code:json}
 ${buildPagePayloadExample(ticket)}
 {code}
@@ -96,7 +114,7 @@ h3. Common Fields
 Every Page event includes OOB:
  * common context documentation: [https://www.twilio.com/docs/segment/connections/spec/common]
 
-h2. Chrome Extension
+${developerNotes(ticket, options)}h2. Chrome Extension
 
 Segment offers a Chrome extension, [Segment Inspector|https://chromewebstore.google.com/detail/segment-inspector-officia/jfcbmnpfbhhlhfclmiijpldieboendfo], which can be useful for validating event payloads.
 
@@ -117,20 +135,20 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
 
 // ─── Web Identify ───
 
-export function webIdentify(ticket) {
+export function webIdentify(ticket, options = {}) {
   const traits = ticket.traits || [];
   return {
     summary: `[Instrumentation] Web Identify: ${ticket.whenFired}`,
     description: `h2. Summary
 
-Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user during their web session. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user during their web session. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -140,10 +158,11 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatTraits(traits)}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
+*Example payload (as received by Segment):*
 {code:json}
-${buildIdentifyPayloadExample(ticket, false)}
+${buildIdentifyPayloadExample(ticket)}
 {code}
 
 h3. Common Fields
@@ -151,7 +170,7 @@ h3. Common Fields
 Every Identify event includes OOB:
  * common context documentation: [https://www.twilio.com/docs/segment/connections/spec/common]
 
-h2. Chrome Extension
+${developerNotes(ticket, options)}h2. Chrome Extension
 
 Segment offers a Chrome extension, [Segment Inspector|https://chromewebstore.google.com/detail/segment-inspector-officia/jfcbmnpfbhhlhfclmiijpldieboendfo], which can be useful for validating event payloads.
 
@@ -177,13 +196,13 @@ h2. Acceptance Criteria
 
 // ─── SS (Server-Side) Track ───
 
-export function ssTrack(ticket) {
+export function ssTrack(ticket, options = {}) {
   const props = ticket.properties || [];
   return {
     summary: `[Instrumentation] SS Track: ${ticket.eventName}`,
     description: `h2. Summary
 
-Implement the *${ticket.eventName}* event server-side. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.eventName}* event server-side. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -193,15 +212,16 @@ h3. ${ticket.eventName}
  * For ${ticket.idState || 'identified'} users
 
 *Properties:*
-${formatProperties(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
+*Example payload (as received by Segment):*
 {code:json}
 ${buildTrackPayloadExample(ticket, true)}
 {code}
 
-h2. Segment's Documentation
+${developerNotes(ticket, options)}h2. Segment's Documentation
 
 [Java Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/java#track]
 [Spec: Track|https://segment.com/docs/connections/spec/track]
@@ -218,20 +238,20 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
 
 // ─── SS (Server-Side) Identify ───
 
-export function ssIdentify(ticket) {
+export function ssIdentify(ticket, options = {}) {
   const traits = ticket.traits || [];
   return {
     summary: `[Instrumentation] SS Identify: ${ticket.whenFired}`,
     description: `h2. Summary
 
-Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -241,13 +261,14 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatTraits(traits)}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
+*Example payload (as received by Segment):*
 {code:json}
-${buildIdentifyPayloadExample(ticket, true)}
+${buildIdentifyPayloadExample(ticket)}
 {code}
 
-h2. Segment's Documentation
+${developerNotes(ticket, options)}h2. Segment's Documentation
 
 [Java Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/server/java#identify]
 [Spec: Identify|https://segment.com/docs/connections/spec/identify]
@@ -269,13 +290,13 @@ h2. Acceptance Criteria
 
 // ─── Mobile App Track ───
 
-export function mobileTrack(ticket) {
+export function mobileTrack(ticket, options = {}) {
   const props = ticket.properties || [];
   return {
     summary: `[Instrumentation] Mobile Track: ${ticket.eventName}` + (ticket.instanceLabel !== 'mobile app' ? ` (${ticket.instanceLabel})` : ''),
     description: `h2. Summary
 
-Implement the *${ticket.eventName}* event required for capturing ${ticket.whenFired || '_'} in the app. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.eventName}* event required for capturing ${ticket.whenFired || '_'} in the app. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -285,11 +306,12 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatProperties(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
-{code:JSON}
+*Example payload (as received by Segment):*
+{code:json}
 ${buildTrackPayloadExample(ticket, true)}
 {code}
 
@@ -297,7 +319,7 @@ h3. Common Fields
 Every Track event includes OOB:
  * common context documentation: https://www.twilio.com/docs/segment/connections/spec/common
 
-h2. Segment's Documentation
+${developerNotes(ticket, options)}h2. Segment's Documentation
 [Analytics React Native Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/implementation#track]
 [Spec: Track|https://segment.com/docs/connections/spec/track]
 [Troubleshooting Analytics React Native|https://segment.com/docs/connections/sources/catalog/libraries/mobile/react-native/troubleshooting]
@@ -313,20 +335,20 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)
+ ** except for event name (page, track)${markerException(ticket)}
  ** except for \`old_page_name\` property`,
   };
 }
 
 // ─── Mobile App Screen ───
 
-export function mobileScreen(ticket) {
+export function mobileScreen(ticket, options = {}) {
   const props = ticket.properties || [];
   return {
     summary: `[Instrumentation] Mobile Screen: ${ticket.eventName}`,
     description: `h2. Summary
 
-Implement the *${ticket.eventName}* screen event required for capturing ${ticket.whenFired || '_'} in the app. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.eventName}* screen event required for capturing ${ticket.whenFired || '_'} in the app. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -336,11 +358,12 @@ h3. ${ticket.eventName}
  * for ${ticket.idState || 'anonymous & identified'} users
 
 *Properties:*
-${formatProperties(props)}
+${formatFieldTable(props, 'Property', ticket.wrapper)}
 
 *Note:* If a property does not have a value or is not applicable to the user action, it should be omitted from the payload entirely. Do not send null, undefined, or empty string values.
 
-{code:JSON}
+*Example payload (as received by Segment):*
+{code:json}
 ${buildScreenPayloadExample(ticket)}
 {code}
 
@@ -348,7 +371,7 @@ h3. Common Fields
 Every Screen event includes OOB:
  * common context documentation: https://www.twilio.com/docs/segment/connections/spec/common
 
-h2. Segment's Documentation
+${developerNotes(ticket, options)}h2. Segment's Documentation
 [Analytics React Native Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/implementation#screen]
 [Spec: Screen|https://segment.com/docs/connections/spec/screen]
 [Troubleshooting Analytics React Native|https://segment.com/docs/connections/sources/catalog/libraries/mobile/react-native/troubleshooting]
@@ -364,19 +387,19 @@ h2. Acceptance Criteria
  * No unplanned fields or invalid property types
  * Fires once per action
  * Values should be set to lowercase
- ** except for event name (page, track)`,
+ ** except for event name (page, track)${markerException(ticket)}`,
   };
 }
 
 // ─── Mobile App Identify ───
 
-export function mobileIdentify(ticket) {
+export function mobileIdentify(ticket, options = {}) {
   const traits = ticket.traits || [];
   return {
     summary: `[Instrumentation] Mobile Identify: ${ticket.whenFired}`,
     description: `h2. Summary
 
-Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user during their app session. This story contains event specifications referenced in the [eventing plan|${EVENTING_PLAN_URL}].
+Implement the *${ticket.priority} Identify call* that follows the ${ticket.whenFired} track call and captures the ${traits.map((t) => t.name).join(', ')} for a user during their app session. This story contains event specifications referenced in the ${planLink()}.
 
 h2. Event spec
 
@@ -386,17 +409,18 @@ h3. Identify with ${ticket.whenFired}
  * For ${ticket.idState || 'identified'} users
 
 {*}Traits{*}:
-${formatTraits(traits)}
+${formatFieldTable(traits, 'Trait', ticket.wrapper)}
 
-{code:JSON}
-${buildIdentifyPayloadExample(ticket, true)}
+*Example payload (as received by Segment):*
+{code:json}
+${buildIdentifyPayloadExample(ticket)}
 {code}
 
 h3. Common Fields
 Every Track event includes OOB:
  * common context documentation: https://www.twilio.com/docs/segment/connections/spec/common
 
-h2. Segment's Documentation
+${developerNotes(ticket, options)}h2. Segment's Documentation
 [Analytics React Native Source|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/implementation#identify]
 [Spec: Identify|https://segment.com/docs/connections/spec/identify]
 [Troubleshooting Analytics React Native|https://www.twilio.com/docs/segment/connections/sources/catalog/libraries/mobile/react-native/troubleshooting]
@@ -428,52 +452,20 @@ const TEMPLATE_MAP = {
   'mobile-identify': mobileIdentify,
 };
 
-export function renderTicket(ticket) {
+/**
+ * @param {Object} options - { devNotes: boolean } — set devNotes=false for the lean, spec-only description
+ */
+export function renderTicket(ticket, options = {}) {
   const fn = TEMPLATE_MAP[ticket.templateType];
   if (!fn) throw new Error(`Unknown template type: ${ticket.templateType}`);
-  return fn(ticket);
+  return fn(ticket, options);
 }
 
-// ─── Formatting Helpers ───
-
-function formatProperties(props) {
-  if (!props || props.length === 0) return ' * (none specified)';
-  return props
-    .map((p) => {
-      let line = ` * *${p.name}*`;
-      if (p.description) line += `\n ** ${p.description}`;
-      if (p.type) line += `\n ** data type = ${p.type}`;
-      if (p.exampleValues) line += `\n ** possible values: ${p.exampleValues}`;
-      line += `\n ** property status: ${p.status || 'unset'}`;
-      return line;
-    })
-    .join('\n');
-}
-
-function formatTraits(traits) {
-  if (!traits || traits.length === 0) return ' * (none specified)';
-  return traits
-    .map((t) => {
-      let line = ` * *${t.name}*`;
-      if (t.description) line += `\n ** ${t.description}`;
-      if (t.type) line += `\n ** data type = ${t.type}`;
-      if (t.exampleValues) line += `\n ** examples: ${t.exampleValues}`;
-      line += `\n ** status: ${t.status || 'unset'}`;
-      return line;
-    })
-    .join('\n');
-}
+// ─── Payload Examples ───
+// Values come from samplePayload(): the first dictionary example, typed to match the property,
+// with dotted names ("products.$.sku") expanded into nested objects and arrays.
 
 function buildTrackPayloadExample(ticket, isServer = false) {
-  const props = (ticket.properties || []).slice(0, 5);
-  const propsObj = {};
-  for (const p of props) {
-    propsObj[p.name] = `<${p.exampleValues || p.type || 'value'}>`;
-  }
-  if (ticket.properties && ticket.properties.length > 5) {
-    propsObj['...'] = '...';
-  }
-
   const payload = {
     event: ticket.eventName,
     context: '{...}',
@@ -482,7 +474,7 @@ function buildTrackPayloadExample(ticket, isServer = false) {
     integrations: {},
     timestamp: '2026-02-24T03:25:55.448Z',
     anonymousId: '14244e0f-259e-4dab-a92c-bb7ef0fc0cbc',
-    properties: propsObj,
+    properties: samplePayload(ticket.properties),
     receivedAt: '2026-02-24T03:25:53.808Z',
     sentAt: '2026-02-24T03:25:52.162Z',
     type: 'track',
@@ -493,12 +485,6 @@ function buildTrackPayloadExample(ticket, isServer = false) {
 }
 
 function buildPagePayloadExample(ticket) {
-  const props = (ticket.properties || []).slice(0, 5);
-  const propsObj = {};
-  for (const p of props) {
-    propsObj[p.name] = `<${p.exampleValues || p.type || 'value'}>`;
-  }
-
   const payload = {
     name: ticket.eventName,
     context: '{...}',
@@ -507,7 +493,7 @@ function buildPagePayloadExample(ticket) {
     integrations: {},
     timestamp: '2026-02-24T03:25:55.448Z',
     anonymousId: '14244e0f-259e-4dab-a92c-bb7ef0fc0cbc',
-    properties: propsObj,
+    properties: samplePayload(ticket.properties),
     receivedAt: '2026-02-24T03:25:53.808Z',
     sentAt: '2026-02-24T03:25:52.162Z',
     type: 'page',
@@ -518,12 +504,6 @@ function buildPagePayloadExample(ticket) {
 }
 
 function buildScreenPayloadExample(ticket) {
-  const props = (ticket.properties || []).slice(0, 5);
-  const propsObj = {};
-  for (const p of props) {
-    propsObj[p.name] = `<${p.exampleValues || p.type || 'value'}>`;
-  }
-
   const payload = {
     name: ticket.eventName,
     context: '{...}',
@@ -532,7 +512,7 @@ function buildScreenPayloadExample(ticket) {
     integrations: {},
     timestamp: '2026-02-24T03:25:55.448Z',
     anonymousId: '14244e0f-259e-4dab-a92c-bb7ef0fc0cbc',
-    properties: propsObj,
+    properties: samplePayload(ticket.properties),
     receivedAt: '2026-02-24T03:25:53.808Z',
     sentAt: '2026-02-24T03:25:52.162Z',
     type: 'screen',
@@ -542,21 +522,16 @@ function buildScreenPayloadExample(ticket) {
   return JSON.stringify(payload, null, 2);
 }
 
-function buildIdentifyPayloadExample(ticket, isServer = false) {
-  const traits = (ticket.traits || []).slice(0, 5);
-  const traitsObj = {};
-  for (const t of traits) {
-    traitsObj[t.name] = `<${t.exampleValues || t.type || 'value'}>`;
-  }
-
+// Identify always carries a userId — that's what ties the traits to a user.
+function buildIdentifyPayloadExample(ticket) {
   const payload = {
     context: '{...}',
     messageId: 'ajs-next-1771903552156-259e5dab-e92c-4b7e-b0fc-0cbc822a6eb0',
-    userId: isServer ? 132498384 : null,
+    userId: 132498384,
     integrations: {},
     timestamp: '2026-02-24T03:25:55.448Z',
     anonymousId: '14244e0f-259e-4dab-a92c-bb7ef0fc0cbc',
-    traits: traitsObj,
+    traits: samplePayload(ticket.traits),
     receivedAt: '2026-02-24T03:25:53.808Z',
     sentAt: '2026-02-24T03:25:52.162Z',
     type: 'identify',

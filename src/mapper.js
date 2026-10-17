@@ -10,6 +10,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fingerprintLabel } from './jira-fields.js';
 
 const TEMPLATE_HINTS = {
   ss: ['server side', 'server', 'backend'],
@@ -221,14 +222,19 @@ export function mapEventsToInstances(events) {
 
   for (const event of events) {
     const instances = resolveInstances(event);
+    const seen = new Map();
     for (const instance of instances) {
-      tickets.push({
+      const ticket = {
         ...event,
         templateType: instance.templateType,
         instanceLabel: instance.instanceLabel,
         platform: instance.platform,
         routingReason: instance.routingReason,
-      });
+      };
+      const dupKey = `${instance.templateType}|${instance.instanceLabel}`.toLowerCase();
+      seen.set(dupKey, (seen.get(dupKey) || 0) + 1);
+      ticket.fingerprint = fingerprintLabel(ticket, seen.get(dupKey));
+      tickets.push(ticket);
     }
   }
 

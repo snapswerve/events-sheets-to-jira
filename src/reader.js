@@ -3,14 +3,15 @@
  *
  * Concept: When GOOGLE_SHEETS_MODE=true, we use the Google Sheets API via a service account
  * to read the latest data. Otherwise, we read a downloaded .xlsx file using the xlsx library.
- * Both paths return the same shape: { track, identify, page, screen, trackDict, identifyDict, sheetNames }.
+ * Both paths return the same shape: { track, identify, page, screen, trackDict, identifyDict, sheetNames, tabGids }.
+ * API mode also returns spreadsheetId; with tabGids (tab name → sheet ID) it lets tickets link to their exact row.
  */
 
 import XLSX from 'xlsx';
 import { google } from 'googleapis';
 import fs from 'fs';
 
-const TAB_NAMES = {
+export const TAB_NAMES = {
   track: 'Track',
   identify: 'Identify',
   page: 'Page',
@@ -40,6 +41,9 @@ export async function readEventingPlan() {
  * Reads from a local .xlsx file.
  */
 function readFromXlsx(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`No workbook at ${filePath}. Set EVENTING_PLAN_PATH, or GOOGLE_SHEETS_MODE=true to read from the API.`);
+  }
   const wb = XLSX.readFile(filePath);
 
   const getSheet = (name) => {
@@ -57,6 +61,7 @@ function readFromXlsx(filePath) {
     identifyDict: getSheet(TAB_NAMES.identifyDict),
     protocolsImport: getSheet(TAB_NAMES.protocolsImport),
     sheetNames: wb.SheetNames,
+    tabGids: {},
   };
 }
 
@@ -84,6 +89,7 @@ async function readFromGoogleSheets() {
   // Get all sheet names
   const meta = await sheets.spreadsheets.get({ spreadsheetId });
   const sheetNames = meta.data.sheets.map((s) => s.properties.title);
+  const tabGids = Object.fromEntries(meta.data.sheets.map((s) => [s.properties.title, s.properties.sheetId]));
 
   const getTab = async (name) => {
     if (!sheetNames.includes(name)) return [];
@@ -105,5 +111,5 @@ async function readFromGoogleSheets() {
     getTab(TAB_NAMES.protocolsImport),
   ]);
 
-  return { track, identify, page, screen, trackDict, identifyDict, protocolsImport, sheetNames };
+  return { track, identify, page, screen, trackDict, identifyDict, protocolsImport, sheetNames, tabGids, spreadsheetId };
 }

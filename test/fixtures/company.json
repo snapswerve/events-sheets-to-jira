@@ -1,0 +1,15 @@
+{
+  "rules": {
+    "pageLoad": {
+      "enabled": true,
+      "markerProperty": "page_name",
+      "markerReason": "Reporting reads them as the same page.",
+      "pageNames": { "Fixture Override Viewed": "Override" }
+    }
+  },
+  "notes": [
+    { "title": "Web page-load note", "when": { "pageLoad": true, "platforms": ["web"] }, "body": "Applies to web page loads." },
+    { "title": "Page-only note", "when": { "templateTypes": ["web-page"] }, "body": "Applies to web page tickets." },
+    { "title": "Payments note", "when": { "teams": ["ECQ"], "hasProperty": "order_id" }, "body": "Applies to ECQ events with order_id." }
+  ]
+}
