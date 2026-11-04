@@ -33,10 +33,12 @@ export function fingerprintLabel(ticket, occurrence = 1) {
     ticket.templateType,
     ticket.instanceLabel,
     occurrence > 1 ? occurrence : '',
-  ]
-    .join('|')
-    .toLowerCase();
-  return FINGERPRINT_PREFIX + crypto.createHash('sha1').update(key).digest('hex').slice(0, 10);
+  ];
+  // Update tickets (a live template's new properties) get their own ID per batch of properties,
+  // so they never match the template's original ticket and a later batch gets a new one
+  if (ticket.updateKey) key.push(`update:${ticket.updateKey}`);
+  const text = key.join('|').toLowerCase();
+  return FINGERPRINT_PREFIX + crypto.createHash('sha1').update(text).digest('hex').slice(0, 10);
 }
 
 export function buildLabels(ticket) {

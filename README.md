@@ -13,7 +13,7 @@ Google Sheet (API) or .xlsx → reader → parser → enricher → mapper → te
 1. **Reads** a Google Sheet via the Sheets API (recommended) or a local `.xlsx` workbook — either way, expects tabs: Track, Identify, Page, Screen, plus two dictionary tabs (Track Properties Dictionary, Identify Traits Dictionary)
 2. **Parses** each tab's event groups — priority, event name, trigger, properties/traits
 3. **Enriches** properties/traits with type, description, and example values from the dictionary tabs
-4. **Maps** each event to one or more ticket instances based on templates (e.g. "Checkout Started" fires on 6 different web/mobile templates → 6 tickets)
+4. **Maps** each event to one or more ticket instances based on templates (e.g. "Checkout Started" fires on 6 different web/mobile templates → 6 tickets). On the Track tab, a property row's Templates cell scopes that property to those templates, and a live event's new rows become [update tickets](#live-events-update-tickets-and-template-scope)
 5. **Renders** each instance into Jira wiki markup using the correct template (Web Track, Web Page, Web Identify, SS Track, SS Identify, Mobile Track, Mobile Screen, Mobile Identify), plus generated [Developer Notes](#developer-notes)
 6. **Creates** Jira Stories via REST API, skipping ones that already exist, or exports to `.xlsx`/`.csv` for Jira import
 
@@ -176,6 +176,19 @@ Every ticket gets a fingerprint label (e.g. `tp-3f9a1c2b10`) built from its tab,
 Each live run writes `output/jira-results-<timestamp>.csv` with the status, issue key, and link for every ticket. Rows are added as tickets are created, so the file is complete even if a run is interrupted, and you can paste the keys back into the plan's Ticket column.
 
 Jira rate limits (HTTP 429/503) are retried automatically, honoring `Retry-After`.
+
+### Live events: update tickets and template scope
+
+Track tab only. Two columns are read per **property row**:
+
+- **Templates (scope).** On a property row (not the event's first row), Templates lists the templates that property applies to: `askcr chat web; askcr chat mobile app` keeps `message_id` off every other template's ticket. Empty means every template of the event (the old behavior). A scoped name must match one of the event's templates exactly (case doesn't matter).
+- **Implement Status.** An event is **live** when any of its rows is past `Not Started` (Prioritized, Dev In Progress, QA on Stage, On Prod, …). For each of its templates:
+  - the template has live rows that apply to it: it already has a ticket, so it gets an **update ticket**, `[Instrumentation] Web Track Update: <Event> (<template>)` (Mobile / SS likewise), listing only the rows marked `Not Started` that apply to it, with "send these on the existing call". No new rows apply → no ticket.
+  - no live row applies to it: the template is new to the event and gets the full ticket, as before.
+
+  Rows with no Implement Status on a live event aren't listed in its update tickets (they could be live already); the ticket names them so their status can be set. Events with no row past Not Started get full tickets as before.
+
+The page-load rule still sees every applicable row, so a live page-load track keeps counting as one even when its update lists only new properties. Update tickets get their own fingerprint per set of new properties: they never match the template's original ticket, a re-run skips them once created, and a later batch of new rows gets a new update ticket. A ticket you've already edited by hand into the update is matched by summary if you rename it to the update title.
 
 ### Output
 

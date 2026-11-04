@@ -265,6 +265,10 @@ function printPreview(tickets, opts) {
     console.log(`\n[${i + 1}/${tickets.length}] ${ticket.summary}`);
     console.log(`    ${ticket.priority} · ${ticket.templateType} · ${ticket.platform} · ${tabLabel(ticket)} row ${ticket.sourceRow} · ${ticket.fingerprint}`);
     console.log(`    ${ticket.tabType === 'identify' ? 'Traits' : 'Properties'}: ${fields}` + (questions.length > 0 ? ` · ⚠️  ${plural(questions.length, 'open question')}` : ''));
+    if (ticket.update) {
+      console.log(`    Update to a live template — new: ${ticket.properties.map((p) => p.name).join(', ')}`);
+      if (ticket.update.blankStatus.length) console.log(`    ⚠️  No Implement Status, left out: ${ticket.update.blankStatus.join(', ')}`);
+    }
     if (opts.verbose) {
       for (const q of questions) console.log(`      - ${q.replace(/\{\{|\}\}/g, '')}`);
       console.log(`\n${ticket.description}\n${'·'.repeat(60)}`);

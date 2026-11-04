@@ -58,10 +58,11 @@ const track = tab(TRACK_HEADERS, [
     'Property Status': 'Required', 'Jira Tickets': 'DP-42, DP-43', 'In dev': true, 'In Stage': 'Yes', 'In Prod': 'Yes',
     'Implement Status': 'On Prod',
   },
-  { 'Property Priority': 'P1', Properties: 'total', 'Property Status': 'Required' },
-  { 'Property Priority': 'P2', Properties: 'address.city', 'Property Status': 'Optional' },
-  { 'Property Priority': 'P2', Properties: 'address.state', 'Property Status': 'Optional' },
-  { 'Property Priority': 'P2', Properties: 'payment_method', 'Property Status': 'Optional' },
+  { 'Property Priority': 'P1', Properties: 'total', 'Property Status': 'Required', 'Implement Status': 'On Prod' },
+  // Added to the live event: the server ticket becomes an update listing only these
+  { 'Property Priority': 'P2', Properties: 'address.city', 'Property Status': 'Optional', 'Implement Status': 'Not Started' },
+  { 'Property Priority': 'P2', Properties: 'address.state', 'Property Status': 'Optional', 'Implement Status': 'Not Started' },
+  { 'Property Priority': 'P2', Properties: 'payment_method', 'Property Status': 'Optional', 'Implement Status': 'Not Started' },
   {
     Priority: 'P2', 'Generating Source': 'Web', 'Product Section': 'Search', 'Event Name': 'Products Searched',
     'When Fired': 'user submits a search query', 'ID state': 'Both', 'Team Ownership': 'Search',
