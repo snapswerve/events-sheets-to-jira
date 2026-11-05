@@ -89,7 +89,7 @@ export async function createJiraTicket(renderedTicket, config) {
       summary: renderedTicket.summary,
       description: renderedTicket.description,
       issuetype: { name: config.issueType },
-      priority: { name: jiraPriority(renderedTicket.priority) },
+      priority: { name: jiraPriority() },
       labels: buildLabels(renderedTicket),
       ...epic,
     },

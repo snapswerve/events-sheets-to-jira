@@ -56,7 +56,7 @@ before(async () => {
 after(() => server.close());
 
 function setEnv(vars) {
-  for (const name of ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN', 'JIRA_PAT', 'JIRA_PROJECT_KEY', 'JIRA_EPIC_KEY', 'JIRA_EPIC_FIELD']) {
+  for (const name of ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN', 'JIRA_PAT', 'JIRA_PROJECT_KEY', 'JIRA_EPIC_KEY', 'JIRA_EPIC_FIELD', 'JIRA_PRIORITY']) {
     delete process.env[name];
   }
   Object.assign(process.env, { JIRA_BASE_URL: baseUrl, JIRA_PROJECT_KEY: 'DP', JIRA_EPIC_KEY: 'DP-9' }, vars);
@@ -85,6 +85,18 @@ test('Data Center: bearer token, v2 search, Epic Link field', async () => {
   assert.equal(create.body.fields.customfield_10100, 'DP-9');
   assert.equal(create.body.fields.parent, undefined);
   assert.ok(create.body.fields.labels.includes('tp-new'));
+  assert.deepEqual(create.body.fields.priority, { name: 'Tier 2' }, "plan's P1 doesn't set the Jira priority");
+});
+
+test('JIRA_PRIORITY overrides the Tier 2 default', async () => {
+  deploymentType = 'DataCenter';
+  setEnv({ JIRA_PAT: 'test-pat', JIRA_PRIORITY: 'Tier 1' });
+
+  const config = await detectJiraSetup(getJiraConfig());
+  await createJiraTicket({ ...ticket, priority: 'P3' }, config);
+
+  const create = requests.find((r) => r.url === '/rest/api/2/issue');
+  assert.deepEqual(create.body.fields.priority, { name: 'Tier 1' });
 });
 
 test('Cloud: basic auth, enhanced JQL search, parent epic, retries 429', async () => {
