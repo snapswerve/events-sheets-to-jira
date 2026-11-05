@@ -95,6 +95,7 @@ Fill in your values:
 | `JIRA_PROJECT_KEY` | Your Jira project key (e.g. `TRACK`) |
 | `JIRA_EPIC_KEY` | The Epic to link all tickets to (e.g. `TRACK-123`) |
 | `JIRA_ISSUE_TYPE` | Optional — issue type to create (default: `Story`) |
+| `JIRA_PRIORITY` | Optional — Jira priority every new ticket starts at (default: `Tier 2`) |
 | `JIRA_EPIC_FIELD` | Optional — normally detected: `parent` on Jira Cloud, the Epic Link custom field on Data Center/Server. Set it (e.g. `customfield_10008`) to override |
 | `JIRA_EXTRA_LABELS` | Optional — comma-separated labels added to every ticket (e.g. `q4-launch,web-team`) |
 
@@ -195,7 +196,7 @@ The page-load rule still sees every applicable row, so a live page-load track ke
 Each Jira ticket gets:
 - **Summary:** `[Instrumentation] {Platform} {Type}: {Event Name} ({template})`
 - **Description:** Full Jira wiki markup with event spec, properties table, example payload, [Developer Notes](#developer-notes), Segment docs links, and acceptance criteria
-- **Priority:** P0→Highest, P1→High, P2→Medium, P3→Low
+- **Priority:** `Tier 2` for every ticket (or `JIRA_PRIORITY`), whatever the plan's P0–P3. Re-prioritize in Jira; re-runs never change it
 - **Labels:** `instrumentation`, `analytics`, `{platform}`, `{template-type}`, `tp-{fingerprint}`, plus any `JIRA_EXTRA_LABELS`
 - **Epic:** Set from `JIRA_EPIC_KEY`
 
@@ -292,7 +293,7 @@ src/
 ├── dev-notes.js    # Developer Notes: snippets, checklist, QA steps, open questions, properties table
 ├── links.js        # Links back to the CR plan, down to the event's row
 ├── jira.js         # Jira REST API, Cloud and Data Center (create, find existing, retries)
-├── jira-fields.js  # Priority map, labels, fingerprints — shared by jira.js and exporter.js
+├── jira-fields.js  # Priority, labels, fingerprints — shared by jira.js and exporter.js
 ├── rules.js        # Company rules (page-load) and conditional notes, from data/company.json
 ├── exporter.js     # Exports to xlsx/csv matching Jira import format
 └── sheets.js       # Google Sheets API helpers
@@ -316,7 +317,7 @@ This tool is built for a specific workbook format but is designed to be forked a
 - **Standing notes or rules for a company?** Put them in `data/company.json` (or a file named by `COMPANY_CONFIG`)
 - **Different Jira templates?** Edit `templates.js` — each function returns `{ summary, description }`
 - **Different developer notes?** Edit `dev-notes.js` — e.g. swap the SDK snippets if your mobile app is native iOS/Android rather than React Native
-- **Different priority mapping?** Edit the `PRIORITY_MAP` in `jira-fields.js`
+- **Different starting priority?** Set `JIRA_PRIORITY`, or edit `jiraPriority()` in `jira-fields.js`
 - **Add new tab types?** Add a parse function in `parser.js`, enrich in `enricher.js`, map in `mapper.js`
 
 ---

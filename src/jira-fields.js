@@ -5,18 +5,15 @@
 
 import crypto from 'crypto';
 
-export const PRIORITY_MAP = {
-  P0: 'Highest',
-  P0C: 'Highest',
-  P1: 'High',
-  P2: 'Medium',
-  P3: 'Low',
-};
-
 export const FINGERPRINT_PREFIX = 'tp-';
 
-export function jiraPriority(priority) {
-  return PRIORITY_MAP[String(priority || '').toUpperCase()] || 'Medium';
+/**
+ * Jira priority for every new ticket. The plan's P0–P3 doesn't carry over: tickets move to
+ * other squads' boards, which rank work their own way, so each starts at the same tier and
+ * is re-prioritized in Jira. Set JIRA_PRIORITY to use a different one for a run.
+ */
+export function jiraPriority() {
+  return process.env.JIRA_PRIORITY || 'Tier 2';
 }
 
 /**
