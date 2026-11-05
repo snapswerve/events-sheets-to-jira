@@ -65,9 +65,37 @@ export function isTicketed(event) {
 export function buildTickets(events, { source = {}, devNotes = true, config = loadCompanyConfig(), planEvents = events } = {}) {
   const ruleContext = buildRuleContext(planEvents, normalizeConfig(config));
   return mapEventsToInstances(events).map((instance) => {
-    const ticket = applyRules({ ...instance, sourceUrl: getRowUrl(instance.tabType, instance.sourceRow, source) }, ruleContext);
-    return { ...ticket, ...renderTicket(ticket, { devNotes }) };
+    const ruled = applyRules({ ...instance, sourceUrl: getRowUrl(instance.tabType, instance.sourceRow, source) }, ruleContext);
+    const ticket = ruled.update ? narrowToUpdate(ruled) : ruled;
+    const rendered = renderTicket(ticket, { devNotes });
+    return { ...ticket, ...(ticket.update ? asUpdate(ticket, rendered) : rendered) };
   });
+}
+
+/**
+ * An update ticket (a live template's new rows, see mapper.js) lists only the new properties.
+ * The rules ran on every applicable row first, so a live page-load track still counts as one.
+ */
+function narrowToUpdate(ticket) {
+  const added = new Set(ticket.update.properties.map((n) => n.toLowerCase()));
+  return { ...ticket, properties: (ticket.properties || []).filter((p) => added.has(p.name.toLowerCase())) };
+}
+
+/** Summary "[Instrumentation] Web Track Update: …" and a summary paragraph that says to extend the live call. */
+function asUpdate(ticket, { summary, description }) {
+  const names = ticket.properties.map((p) => `{{${p.name}}}`);
+  const intro = `*${ticket.eventName}* is live on this template (${ticket.instanceLabel}). Send ${names.length === 1 ? 'this new property' : 'these new properties'} on the existing call: ${names.join(', ')}. Don't change the rest of the call. Spec in the ${planLinkText(ticket)}.`;
+  const blank = ticket.update.blankStatus.length
+    ? `\n\n_Rows with no Implement Status, left out of this update: ${ticket.update.blankStatus.map((n) => `{{${n}}}`).join(', ')}. Set their status in the plan if they're new._`
+    : '';
+  return {
+    summary: summary.replace(/^\[Instrumentation\] (\w+) Track: /, '[Instrumentation] $1 Track Update: '),
+    description: description.replace(/^h2\. Summary\n\n[^\n]*\n/, `h2. Summary\n\n${intro}${blank}\n`),
+  };
+}
+
+function planLinkText(ticket) {
+  return ticket.sourceUrl ? `[eventing plan|${ticket.sourceUrl}]` : 'eventing plan';
 }
 
 /**

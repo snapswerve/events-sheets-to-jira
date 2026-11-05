@@ -6,11 +6,18 @@
  * Routing strategy:
  * 1) Infer source family from template label first (web/mobile/ss)
  * 2) Fall back to Generating Source only when template is ambiguous/missing
+ *
+ * Track events, per template instance (see scopeTrackInstance):
+ * - A property row's Templates cell scopes it to those templates (empty = every template).
+ * - A live event (a property row whose Implement Status is past Not Started) gets, for a template
+ *   that already has live rows, an update ticket listing only its Not Started rows, or no ticket
+ *   when none apply. A template with no live rows is new and keeps the full ticket.
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fingerprintLabel } from './jira-fields.js';
+import { parseTemplatesList } from './parser.js';
 
 const TEMPLATE_HINTS = {
   ss: ['server side', 'server', 'backend'],
@@ -203,18 +210,6 @@ function familyToPlatform(family) {
 }
 
 /**
- * Parses the "Templates" column into an array.
- * Supports newline / semicolon / comma separated values.
- */
-function parseTemplatesList(raw) {
-  if (!raw) return [];
-  return String(raw)
-    .split(/\n|;|,/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-/**
  * Main export: takes all parsed events and returns a flat list of ticket instances.
  */
 export function mapEventsToInstances(events) {
@@ -224,7 +219,7 @@ export function mapEventsToInstances(events) {
     const instances = resolveInstances(event);
     const seen = new Map();
     for (const instance of instances) {
-      const ticket = {
+      const base = {
         ...event,
         templateType: instance.templateType,
         instanceLabel: instance.instanceLabel,
@@ -233,10 +228,65 @@ export function mapEventsToInstances(events) {
       };
       const dupKey = `${instance.templateType}|${instance.instanceLabel}`.toLowerCase();
       seen.set(dupKey, (seen.get(dupKey) || 0) + 1);
+      const ticket = event.tabType === 'track' ? scopeTrackInstance(base) : base;
+      if (!ticket) continue; // live template with nothing new
       ticket.fingerprint = fingerprintLabel(ticket, seen.get(dupKey));
       tickets.push(ticket);
     }
   }
 
   return tickets;
+}
+
+// ─── Live events and template scope (Track tab) ───
+
+const NOT_STARTED = 'not started';
+
+/** True when a row's Implement Status is past Not Started (Prioritized, Dev In Progress, QA on Stage, On Prod, ...). */
+export function isLiveStatus(status) {
+  const s = String(status || '').trim().toLowerCase();
+  return s !== '' && s !== NOT_STARTED;
+}
+
+export function isNotStarted(status) {
+  return String(status || '').trim().toLowerCase() === NOT_STARTED;
+}
+
+/** True when a property row applies to a template: no scope on the row, or the template is listed. */
+export function appliesToTemplate(prop, instanceLabel) {
+  const scope = prop.templateScope || [];
+  if (scope.length === 0) return true;
+  const label = String(instanceLabel || '').trim().toLowerCase();
+  return scope.some((t) => t.toLowerCase() === label);
+}
+
+/** True when any property row of the event is past Not Started. */
+export function isLiveEvent(event) {
+  return (event.properties || []).some((p) => isLiveStatus(p.implementStatus));
+}
+
+/**
+ * Narrows one track ticket instance to the property rows that apply to its template, and turns it
+ * into an update ticket when the template is already live. Returns null when a live template has no
+ * new rows (nothing to ticket).
+ *
+ * An update ticket keeps every applicable row in `properties` (the page-load rule needs the full
+ * picture, e.g. page_name on a live page-load track) and lists the new ones in `update.properties`;
+ * pipeline.js narrows the rendered ticket to those after the rules run.
+ */
+function scopeTrackInstance(ticket) {
+  const all = ticket.properties || [];
+  const applicable = all.filter((p) => appliesToTemplate(p, ticket.instanceLabel));
+  const scoped = { ...ticket, properties: applicable };
+  if (!isLiveEvent(ticket) || !applicable.some((p) => isLiveStatus(p.implementStatus))) {
+    return scoped; // not live, or a template new to a live event: the full ticket
+  }
+  const added = applicable.filter((p) => isNotStarted(p.implementStatus));
+  if (added.length === 0) return null;
+  const unknown = applicable.filter((p) => !String(p.implementStatus || '').trim()).map((p) => p.name);
+  return {
+    ...scoped,
+    update: { properties: added.map((p) => p.name), blankStatus: unknown },
+    updateKey: added.map((p) => p.name.toLowerCase()).sort().join(','),
+  };
 }

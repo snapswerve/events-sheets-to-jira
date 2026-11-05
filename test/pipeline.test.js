@@ -643,3 +643,76 @@ test('Home Viewed: only the tickets on hold platforms are held', () => {
   assert.deepEqual(findHeldTickets(events, example).map((h) => [h.platform, h.marker]), [['web', 'page_name'], ['mobile', 'screen_name']]);
   assert.equal(holdBackTickets(buildTickets(home, { config: example, planEvents: events }), { config: example }).tickets.length, 0);
 });
+
+// ─── Live events: update tickets and template scope ───
+
+const LIVE_HEADERS = ['Priority', 'Generating Source', 'Event Name', 'When Fired', 'Templates', 'Properties', 'Property Status', 'Implement Status'];
+const liveRows = (rows) => [LIVE_HEADERS, ...rows.map((r) => LIVE_HEADERS.map((h) => r[h] ?? ''))];
+const liveTickets = (rows) => buildTickets(parseTrackTab(liveRows(rows)), { config: {} });
+
+test('a live template gets an update ticket with only its Not Started rows', () => {
+  const tickets = liveTickets([
+    { Priority: 'P2', 'Generating Source': 'Web', 'Event Name': 'Ratings Viewed', 'When Fired': 'ratings page loads',
+      Templates: 'ratings web\ncr recommended web', Properties: 'product_id', 'Property Status': 'Required', 'Implement Status': 'On Prod' },
+    { Properties: 'sort_order', 'Implement Status': 'QA on Stage' },
+    { Properties: 'result_count', 'Property Status': 'Optional', 'Implement Status': 'Not Started' },
+    { Properties: 'filter_set_id', 'Property Status': 'Optional', 'Implement Status': 'Not Started' },
+  ]);
+  assert.equal(tickets.length, 2);
+  const t = tickets[0];
+  assert.equal(t.summary, '[Instrumentation] Web Track Update: Ratings Viewed (ratings web)');
+  assert.deepEqual(t.properties.map((p) => p.name), ['result_count', 'filter_set_id']);
+  assert.match(t.description, /is live on this template \(ratings web\)\. Send these new properties on the existing call: \{\{result_count\}\}, \{\{filter_set_id\}\}/);
+  assert.doesNotMatch(t.description, /product_id|sort_order/);
+  assert.doesNotMatch(t.description, /Implement the \*Ratings Viewed\* event/);
+});
+
+test('a property row\'s Templates scope it; templates with nothing new get no ticket', () => {
+  const tickets = liveTickets([
+    { Priority: 'P2', 'Generating Source': 'Web; Mobile', 'Event Name': 'Shopping Link Clicked', 'When Fired': 'a retailer link is clicked',
+      Templates: 'products model web\ncars model web\naskcr chat web\naskcr chat mobile app', Properties: 'retailer', 'Implement Status': 'On Prod' },
+    { Properties: 'placement', 'Implement Status': 'Not Started', Templates: 'products model web; cars model web' },
+    { Properties: 'message_id', 'Implement Status': 'On Prod', Templates: 'askcr chat web, askcr chat mobile app' },
+  ]);
+  assert.deepEqual(tickets.map((t) => t.instanceLabel), ['products model web', 'cars model web']);
+  for (const t of tickets) assert.deepEqual(t.properties.map((p) => p.name), ['placement']);
+});
+
+test('a template new to a live event keeps the full ticket, without other templates\' scoped rows', () => {
+  const tickets = liveTickets([
+    { Priority: 'P2', 'Generating Source': 'Web', 'Event Name': 'Overview Viewed', 'When Fired': 'overview loads',
+      Templates: 'products overview web\nfind a car web', Properties: 'make', 'Implement Status': 'Not Started', },
+    { Properties: 'product_id', 'Implement Status': 'On Prod', Templates: 'products overview web' },
+  ]);
+  const byLabel = Object.fromEntries(tickets.map((t) => [t.instanceLabel, t]));
+  assert.match(byLabel['products overview web'].summary, /Web Track Update: /);
+  assert.deepEqual(byLabel['products overview web'].properties.map((p) => p.name), ['make']);
+  assert.match(byLabel['find a car web'].summary, /^\[Instrumentation\] Web Track: Overview Viewed \(find a car web\)$/);
+  assert.deepEqual(byLabel['find a car web'].properties.map((p) => p.name), ['make']);
+});
+
+test('events that aren\'t live and rows without a scope behave as before', () => {
+  const rows = [
+    { Priority: 'P1', 'Generating Source': 'Web', 'Event Name': 'Form Submitted', 'When Fired': 'a form is submitted',
+      Templates: 'newsletter web\npetition web', Properties: 'form_id', 'Implement Status': 'Not Started' },
+    { Properties: 'form_type' },
+  ];
+  const tickets = liveTickets(rows);
+  assert.equal(tickets.length, 2);
+  for (const t of tickets) {
+    assert.match(t.summary, /Web Track: Form Submitted/);
+    assert.deepEqual(t.properties.map((p) => p.name), ['form_id', 'form_type']);
+  }
+});
+
+test('update tickets get their own fingerprint per batch of new properties', () => {
+  const event = (status) => [
+    { Priority: 'P2', 'Generating Source': 'Web', 'Event Name': 'Ratings Viewed', Templates: 'ratings web', Properties: 'product_id', 'Implement Status': status },
+    { Properties: 'branch', 'Implement Status': 'Not Started' },
+  ];
+  const original = liveTickets(event('Not Started'))[0].fingerprint;
+  const update = liveTickets(event('On Prod'))[0].fingerprint;
+  assert.notEqual(original, update);
+  const later = liveTickets([...event('On Prod'), { Properties: 'result_count', 'Implement Status': 'Not Started' }])[0].fingerprint;
+  assert.notEqual(update, later);
+});

@@ -19,6 +19,10 @@
  *
  * Comments and Code Example on the event's first row belong to the event; on later rows they
  * belong to that row's property.
+ *
+ * Templates on a later (property) row scope that property: it applies only to the templates listed
+ * there (empty = every template of the event). Implement Status is read per property row; mapper.js
+ * uses both to turn a live event's new rows into update tickets.
  */
 
 import { findColumns, missingHeadersMessage, rowReader } from './columns.js';
@@ -33,6 +37,7 @@ const COMMON_COLUMNS = {
   existingTicket: ['Jira Tickets', 'Ticket', 'Ticket PROD'],
   codeExample: ['Code Example'],
   comments: ['Comments'],
+  implementStatus: ['Implement Status'],
 };
 
 const TAB_SPECS = {
@@ -151,6 +156,10 @@ function parseEventTab(rows, tabType) {
         // Notes on the event's first row are about the event, not its first property
         comment: startsEvent ? '' : get(row, 'comments'),
         codeExample: startsEvent ? '' : get(row, 'codeExample'),
+        implementStatus: get(row, 'implementStatus'),
+        // Templates on the event's first row are the event's; on later rows they scope the property
+        templateScope: startsEvent ? [] : parseTemplatesList(get(row, 'templates')),
+        sourceRow: i + 1,
       });
     } else if (!startsEvent && get(row, 'comments')) {
       current.comments = [current.comments, get(row, 'comments')].filter(Boolean).join('\n');
@@ -162,6 +171,17 @@ function parseEventTab(rows, tabType) {
 }
 
 // ─── Helpers ───
+
+/**
+ * Parses a Templates cell into an array. Supports newline / semicolon / comma separated values.
+ */
+export function parseTemplatesList(raw) {
+  if (!raw) return [];
+  return String(raw)
+    .split(/\n|;|,/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 function normalizePriority(raw) {
   // Handle "P0C" → "P0C", "p1" → "P1", etc.
